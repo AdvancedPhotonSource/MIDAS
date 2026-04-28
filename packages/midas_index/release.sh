@@ -62,6 +62,10 @@ if [ "$PYPROJ_VER" != "$NEW_VERSION" ] || [ "$INIT_VER" != "$NEW_VERSION" ]; the
 fi
 
 echo "[2/7] Running tests..."
+# KMP_DUPLICATE_LIB_OK=TRUE works around the macOS-only OpenMP runtime
+# collision (libomp from torch vs numpy) that aborts process startup with
+# "Abort trap: 6". Harmless no-op on Linux/CI where the env var is ignored.
+KMP_DUPLICATE_LIB_OK=TRUE \
 python -m pytest tests/ -q --tb=short -m "not slow and not gpu and not mps" || {
     echo "ERROR: tests failed. Aborting."
     git checkout -- pyproject.toml midas_index/__init__.py
