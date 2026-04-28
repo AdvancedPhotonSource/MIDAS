@@ -626,16 +626,20 @@ def _peaks_impl(resultDir: str, zipFN: str, numProcs: int, bin_dir: str, blockNr
 # Create retry-capable app
 peaks = create_app_with_retry(_peaks_impl)
 
-def _index_impl(resultDir: str, numProcs: int, bin_dir: str, blockNr: int = 0, 
-               numBlocks: int = 1, useGPU: int = 0, logger=None):
+def _index_impl(resultDir: str, numProcs: int, bin_dir: str, blockNr: int = 0,
+               numBlocks: int = 1, useGPU: int = 0,
+               useTorchIndexer: int = 0, logger=None):
     """Implementation of indexing function.
-    
+
     Args:
         resultDir: Result directory
         numProcs: Number of processors
         bin_dir: Path to the bin directory
         blockNr: Block number
         numBlocks: Number of blocks
+        useGPU: 1 to use IndexerGPU instead of IndexerOMP (C binaries)
+        useTorchIndexer: 1 to use the pure-Python midas-index package
+                        (overrides useGPU; device/dtype via env vars)
         logger: Logger instance
     """
     import subprocess
@@ -677,11 +681,28 @@ def _index_impl(resultDir: str, numProcs: int, bin_dir: str, blockNr: int = 0,
     outfile = f'{resultDir}/midas_log/indexing_out{blockNr}.csv'
     errfile = f'{resultDir}/midas_log/indexing_err{blockNr}.csv'
     
-    indexer_bin = 'IndexerGPU' if useGPU else 'IndexerOMP'
-    logger.info(f"Running {indexer_bin} in {resultDir} for block {blockNr}/{numBlocks}")
-    
+    if useTorchIndexer:
+        indexer_label = 'midas-index (torch)'
+    elif useGPU:
+        indexer_label = 'IndexerGPU'
+    else:
+        indexer_label = 'IndexerOMP'
+    logger.info(f"Running {indexer_label} in {resultDir} for block {blockNr}/{numBlocks}")
+
     with open(outfile, 'w') as f, open(errfile, 'w') as f_err:
-        cmd = f"{os.path.join(bin_dir, indexer_bin)} paramstest.txt {blockNr} {numBlocks} {num_lines} {numProcs}"
+        if useTorchIndexer:
+            # Pure-Python midas-index. Device/dtype come from
+            # MIDAS_INDEX_DEVICE / MIDAS_INDEX_DTYPE env vars (passed via env).
+            cmd = (
+                f"{sys.executable} -m midas_index paramstest.txt "
+                f"{blockNr} {numBlocks} {num_lines} {numProcs}"
+            )
+        else:
+            indexer_bin = 'IndexerGPU' if useGPU else 'IndexerOMP'
+            cmd = (
+                f"{os.path.join(bin_dir, indexer_bin)} paramstest.txt "
+                f"{blockNr} {numBlocks} {num_lines} {numProcs}"
+            )
         logger.info(f"Executing command: {cmd}")
         
         process = subprocess.Popen(
@@ -702,7 +723,7 @@ def _index_impl(resultDir: str, numProcs: int, bin_dir: str, blockNr: int = 0,
             logger.error(error_msg)
             raise RuntimeError(error_msg)
         
-        logger.info(f"{indexer_bin} completed successfully for block {blockNr}/{numBlocks}")
+        logger.info(f"{indexer_label} completed successfully for block {blockNr}/{numBlocks}")
 
 # Create retry-capable app
 index = create_app_with_retry(_index_impl)
@@ -873,6 +894,7 @@ def process_layer(layer_nr: int, top_res_dir: str, ps_fn: str, data_fn: str, num
                  provide_input_all: int, convert_files: int, do_peak_search: int,
                  peak_search_only: int, bin_directory: str, grains_file: str = '',
                  resume_from_stage: str = '', generate_h5: bool = False, useGPU: int = 0,
+                 useTorchIndexer: int = 0,
                  peakFitGPU: int = 0,
                  run_sr: int = 0, srfac: int = 8, sr_config_path: str = 'auto',
                  save_sr_patches: int = 0, save_frame_good_coords: int = 0) -> None:
@@ -1216,7 +1238,9 @@ def process_layer(layer_nr: int, top_res_dir: str, ps_fn: str, data_fn: str, num
             try:
                 res_index = []
                 for nodeNr in range(n_nodes):
-                    res_index.append(index(result_dir, num_procs, bin_directory, blockNr=nodeNr, numBlocks=n_nodes, useGPU=useGPU))
+                    res_index.append(index(result_dir, num_procs, bin_directory, blockNr=nodeNr,
+                                            numBlocks=n_nodes, useGPU=useGPU,
+                                            useTorchIndexer=useTorchIndexer))
                 output_index = [i.result() for i in res_index]
                 ph5.mark('indexing')
             except Exception as e:
@@ -2008,6 +2032,11 @@ def main():
                         help=f'Stage name to restart from (re-runs all stages from that point). Valid stages: {", ".join(FF_STAGE_ORDER)}')
     parser.add_argument('-useGPU', type=int, required=False, default=0,
                         help='Use GPU binaries (IndexerGPU, FitPosOrStrainsGPU) instead of OMP versions. Default: 0')
+    parser.add_argument('-useTorchIndexer', type=int, required=False, default=0,
+                        help='Use the pure-Python midas-index PyPI package (`python -m midas_index`) '
+                             'instead of the C IndexerOMP/IndexerGPU binaries. Device/dtype follow the '
+                             'MIDAS_INDEX_DEVICE / MIDAS_INDEX_DTYPE environment variables (auto-detect '
+                             'CUDA -> MPS -> CPU by default). Default: 0 (use C binary).')
     parser.add_argument('-peakFitGPU', type=int, required=False, default=0,
                         help='Use GPU/PyTorch peak fitter (peakfit_torch from midas-peakfit) instead of '
                              'the OMP C tool PeaksFittingOMPZarrRefactor. Default: 0 (use C tool).')
@@ -2266,6 +2295,7 @@ def main():
                         resume_from_stage=resume_from_stage,
                         generate_h5=bool(args.generateH5),
                         useGPU=args.useGPU,
+                        useTorchIndexer=args.useTorchIndexer,
                         peakFitGPU=args.peakFitGPU,
                         run_sr=run_sr,
                         srfac=srfac,
@@ -2317,6 +2347,7 @@ def main():
                         resume_from_stage=resume_from_stage,
                         generate_h5=bool(args.generateH5),
                         useGPU=args.useGPU,
+                        useTorchIndexer=args.useTorchIndexer,
                         peakFitGPU=args.peakFitGPU,
                         run_sr=run_sr,
                         srfac=srfac,
