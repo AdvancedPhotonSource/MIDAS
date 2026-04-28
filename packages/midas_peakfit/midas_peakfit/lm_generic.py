@@ -206,8 +206,21 @@ def lm_solve_generic(
         u_norm = (u - delta).norm(dim=-1).clamp(min=1e-12)  # pre-step norm
         d_norm = delta.norm(dim=-1)
         rel_x = d_norm / u_norm
-        conv = accept & (rel_cost < config.ftol_rel) & (rel_x < config.xtol_rel)
-        sat = active & (lam_next >= config.lambda_max * 0.5)
+        # When the residual is at its noise floor (e.g. an irreducible σ from
+        # measurement noise), no further step can decrease cost.  cost_new
+        # ends up bit-equal to cost or 1 ULP above; nothing is "accepted",
+        # λ doubles repeatedly, and λ_max would otherwise saturate the
+        # region as if it had diverged.  But if the proposed step magnitude
+        # is already below xtol_rel, the optimisation is parked at the
+        # optimum within numerical precision — that's convergence, not
+        # divergence.  Treat it as such.
+        sat_pending = active & (lam_next >= config.lambda_max * 0.5)
+        at_optimum = sat_pending & (rel_x < config.xtol_rel)
+        conv = (
+            (accept & (rel_cost < config.ftol_rel) & (rel_x < config.xtol_rel))
+            | at_optimum
+        )
+        sat = sat_pending & ~at_optimum
 
         cost = cost_next
         lam = lam_next
