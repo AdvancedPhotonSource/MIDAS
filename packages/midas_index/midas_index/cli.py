@@ -1,0 +1,99 @@
+"""CLI entry point for midas-index.
+
+Drop-in replacement for the IndexerOMP / IndexerGPU positional argv:
+
+    midas-index <param_file> <block_nr> <n_blocks> <n_spots_to_index> <num_procs>
+
+Optional flags (extension over C binaries):
+
+    --device {cpu,cuda,mps}       override auto-detection (env: MIDAS_INDEX_DEVICE)
+    --dtype  {float32,float64}    override per-device default (env: MIDAS_INDEX_DTYPE)
+    --version                     print version and exit
+
+Behaviour mirrors `FF_HEDM/src/IndexerOMP.c::main` exactly:
+  - Reads <param_file> for all 33 paramstest.txt keys.
+  - Computes [startRowNr, endRowNr] from (block_nr, n_blocks, n_spots_to_index).
+  - Writes BestPos_<block_nr>.csv plus consolidated binaries to OutputFolder.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+
+from . import __version__
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="midas-index",
+        description="Pure-Python/PyTorch FF-HEDM indexer (drop-in for IndexerOMP/IndexerGPU).",
+    )
+    parser.add_argument("param_file", help="Path to paramstest.txt")
+    parser.add_argument("block_nr", type=int, help="Block index for sharded run")
+    parser.add_argument("n_blocks", type=int, help="Total number of blocks")
+    parser.add_argument(
+        "n_spots_to_index", type=int, help="Total number of seed spots to process"
+    )
+    parser.add_argument(
+        "num_procs",
+        type=int,
+        help="Threads on CPU (passed to torch.set_num_threads); ignored on GPU/MPS",
+    )
+    parser.add_argument("--device", choices=["cpu", "cuda", "mps"], default=None)
+    parser.add_argument("--dtype", choices=["float32", "float64"], default=None)
+    parser.add_argument("--version", action="version", version=f"midas-index {__version__}")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point. Returns process exit code."""
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    from .indexer import Indexer
+    from .io.output import close_output_files, open_output_files, write_seed_record
+
+    indexer = Indexer.from_param_file(
+        args.param_file, device=args.device, dtype=args.dtype,
+    )
+    indexer.load_observations()
+    obs = indexer._observations
+    assert obs is not None
+
+    spot_ids = obs["spot_ids"]
+    n_total = int(min(args.n_spots_to_index, len(spot_ids)))
+
+    result = indexer.run(
+        block_nr=args.block_nr,
+        n_blocks=args.n_blocks,
+        n_spots_to_index=n_total,
+        num_procs=args.num_procs,
+    )
+
+    # Build a spot_id -> offset map (offset is the row in SpotsToIndex.csv).
+    sid_to_offset: dict[int, int] = {
+        int(sid): i for i, sid in enumerate(spot_ids[:n_total].tolist())
+    }
+
+    output_folder = indexer.params.OutputFolder
+    fd_best, fd_full = open_output_files(output_folder, n_total, args.block_nr)
+    try:
+        for seed in result.seeds:
+            offset = sid_to_offset.get(int(seed.spot_id), -1)
+            if offset < 0:
+                continue
+            write_seed_record(fd_best, seed, offset)
+    finally:
+        close_output_files(fd_best, fd_full)
+
+    print(
+        f"midas-index {__version__}: block {args.block_nr}/{args.n_blocks} "
+        f"completed. {len(result.seeds)} seeds indexed -> {output_folder}/IndexBest.bin",
+        file=sys.stderr,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

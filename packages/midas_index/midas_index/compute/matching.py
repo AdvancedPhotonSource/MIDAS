@@ -1,0 +1,328 @@
+"""Theoretical -> observed spot matching.
+
+Mirrors `CompareSpots` from `FF_HEDM/src/IndexerOMP.c:460` and the GPU kernel
+`gpu_CompareSpots` from `FF_HEDM/src/IndexerGPU.cu:297`.
+
+Tie-break: smallest |delta_omega| match per theoretical spot. **Must match C
+semantics exactly** for byte-identical regression — see dev/implementation_plan.md
+§6.4. C uses strict `<` on diffOme so the lowest-index candidate wins on ties;
+torch's `argmin` returns the first minimum, matching that behaviour.
+
+Implementation strategy: build a dense `[..., max_nspots]` candidate gather
+with masking. For typical bins this fits comfortably in memory; the
+matching iteration becomes one vectorized pass across the (..., n_T) grid.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+import torch
+
+from .binning import get_bin_indices, lookup_bin_counts
+
+DEG2RAD = math.pi / 180.0
+RAD2DEG = 180.0 / math.pi
+
+
+@dataclass
+class MatchResult:
+    """Per-evaluation-tuple match outcome."""
+
+    n_matches: torch.Tensor          # (N,) int64 — total matched theor spots
+    frac_matches: torch.Tensor       # (N,) float — n_matches_frac_calc / n_T_frac_calc
+    avg_ia: torch.Tensor             # (N,) float — IA average; placeholder for v0.1.0
+    matched_obs_id: torch.Tensor     # (N, T) int64 — best obs spot id per theor spot, -1 if none
+    matched_obs_row: torch.Tensor    # (N, T) int64 — row index in `obs` for each match, -1 if none
+    delta_omega: torch.Tensor        # (N, T) float — |Δomega| for the best match, +inf if none
+    matched: torch.Tensor            # (N, T) bool — match found per theor spot
+
+
+def build_eta_margins(
+    ring_radii: dict[int, float],
+    margin_eta: float,
+    stepsize_orient_deg: float,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+    max_n_rings: int = 500,
+) -> torch.Tensor:
+    """Per-ring eta margin: `etamargins[r] = atan(MarginEta / R[r]) + 0.5 * StepOrient`.
+
+    Mirrors IndexerOMP.c:1773-1779. Sparse rings (no radius) get 0.
+    """
+    arr = torch.zeros(max_n_rings, device=device, dtype=dtype)
+    rad2deg = 180.0 / torch.pi
+    half_step = 0.5 * stepsize_orient_deg
+    for r, rad in ring_radii.items():
+        if 0 < r < max_n_rings and rad > 0:
+            arr[r] = (rad2deg * torch.atan(torch.tensor(margin_eta / rad, dtype=dtype, device=device))) + half_step
+    return arr
+
+
+def build_ome_margins(
+    margin_ome: float,
+    stepsize_orient_deg: float,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """181-element omega margin LUT keyed by `int(floor(|eta|))`.
+
+    Mirrors IndexerOMP.c:1768-1772:
+        omemargins[i] = MarginOme + 0.5 * StepOrient / |sin(i*deg2rad)|     for i in 1..179
+        omemargins[0] = omemargins[180] = omemargins[1]
+    """
+    arr = torch.empty(181, device=device, dtype=dtype)
+    deg2rad = torch.pi / 180.0
+    for i in range(1, 180):
+        arr[i] = margin_ome + 0.5 * stepsize_orient_deg / abs(torch.sin(torch.tensor(i * deg2rad, dtype=dtype)).item())
+    arr[0] = arr[1]
+    arr[180] = arr[1]
+    return arr
+
+
+def compare_spots(
+    theor: torch.Tensor,             # (N, T, 14) float
+    valid: torch.Tensor,             # (N, T) bool
+    obs: torch.Tensor,               # (n_obs, 9) float
+    bin_data: torch.Tensor,          # int32 flat — Data.bin
+    bin_ndata: torch.Tensor,         # int32 flat — nData.bin (interleaved count, offset)
+    *,
+    ref_rad: torch.Tensor,           # (N,) float — per-tuple reference radius
+    margin_rad: float,
+    margin_radial: float,
+    eta_margins: torch.Tensor,       # (max_n_rings,) per-ring eta margin
+    ome_margins: torch.Tensor,       # (181,) eta-keyed omega margin LUT
+    eta_bin_size: float,
+    ome_bin_size: float,
+    n_eta_bins: int,
+    n_ome_bins: int,
+    rings_to_reject: torch.Tensor,   # (n_reject,) int — for skipRadialFilter + nMatchesFracCalc
+    distance: float | None = None,    # Lsd in um — required for avg_ia computation
+    pos: torch.Tensor | None = None,  # (N, 3) sample-frame (ga,gb,gc) — required for avg_ia
+) -> MatchResult:
+    """Vectorized binned matching. See module docstring for tie-break semantics."""
+    device = theor.device
+    dtype = theor.dtype
+    N, T, _ = theor.shape
+
+    ring_nr = theor[..., 9].to(torch.int64).clamp(min=0)        # (N, T)
+    eta_post = theor[..., 12]                                    # (N, T)
+    omega = theor[..., 6]                                        # (N, T)
+    rad_diff = theor[..., 13]                                    # (N, T)
+
+    # 1. Bin lookup
+    bin_pos = get_bin_indices(
+        ring_nr, eta_post, omega, eta_bin_size, ome_bin_size, n_eta_bins, n_ome_bins,
+    )                                                            # (N, T)
+    # Out-of-range pos → bin count 0 (no candidates).
+    bin_pos = bin_pos.clamp(0, max(0, (bin_ndata.numel() // 2) - 1))
+    n_per, data_offset = lookup_bin_counts(bin_pos, bin_ndata)   # (N, T) each
+
+    # 2. Dense candidate gather. max_nspots = max bin occupancy.
+    max_n = int(n_per.max().item()) if n_per.numel() else 0
+    if max_n == 0:
+        zeros = torch.zeros((N, T), dtype=torch.bool, device=device)
+        return MatchResult(
+            n_matches=torch.zeros(N, dtype=torch.int64, device=device),
+            frac_matches=torch.zeros(N, dtype=dtype, device=device),
+            avg_ia=torch.zeros(N, dtype=dtype, device=device),
+            matched_obs_id=torch.full((N, T), -1, dtype=torch.int64, device=device),
+            matched_obs_row=torch.full((N, T), -1, dtype=torch.int64, device=device),
+            delta_omega=torch.full((N, T), float("inf"), dtype=dtype, device=device),
+            matched=zeros,
+        )
+
+    # arange over candidate axis, masked by per-cell n_per.
+    cand_arange = torch.arange(max_n, device=device, dtype=torch.int64)        # (M,)
+    cand_arange_b = cand_arange.expand(N, T, max_n)                            # (N, T, M)
+    in_bin = cand_arange_b < n_per.unsqueeze(-1)                                # (N, T, M)
+    rows = data_offset.unsqueeze(-1) + cand_arange_b
+    rows_clamped = rows.clamp(0, bin_data.numel() - 1)
+    spot_rows = bin_data[rows_clamped].to(torch.int64)                          # (N, T, M)
+    # When out-of-bin, point to row 0 — masked off below.
+
+    # 3. Pull observed values per candidate
+    obs_y = obs[..., 0]
+    obs_z = obs[..., 1]
+    obs_ome = obs[..., 2]
+    obs_ringrad = obs[..., 3]
+    obs_id = obs[..., 4].to(torch.int64)
+    obs_eta = obs[..., 6]
+    obs_rad = obs[..., 8]
+
+    cand_ome = obs_ome[spot_rows]                       # (N, T, M)
+    cand_eta = obs_eta[spot_rows]
+    cand_rad = obs_rad[spot_rows]
+    cand_ringrad = obs_ringrad[spot_rows]
+    cand_id = obs_id[spot_rows]
+
+    # 4. Margin checks
+    rad_ok = (rad_diff.unsqueeze(-1) - cand_rad).abs() < margin_radial
+    eta_margin_per = eta_margins[ring_nr.clamp(0, eta_margins.numel() - 1)]    # (N, T)
+    eta_ok = (eta_post.unsqueeze(-1) - cand_eta).abs() < eta_margin_per.unsqueeze(-1)
+
+    # skipRadialFilter for rings in rings_to_reject. Otherwise enforce
+    # |RefRad - obs[3]| < MarginRad.
+    if rings_to_reject.numel() > 0:
+        skip_radial = (
+            ring_nr.unsqueeze(-1) == rings_to_reject.view(1, 1, -1)
+        ).any(dim=-1)                                  # (N, T)
+    else:
+        skip_radial = torch.zeros((N, T), dtype=torch.bool, device=device)
+    # ref_rad expands to (N, 1) since it's per-tuple
+    ref_rad_b = ref_rad.view(N, 1, 1).expand(N, T, max_n)
+    radial_pass = (ref_rad_b - cand_ringrad).abs() < margin_rad
+    radial_ok = skip_radial.unsqueeze(-1) | radial_pass
+
+    ok = in_bin & rad_ok & radial_ok & eta_ok & valid.unsqueeze(-1)            # (N, T, M)
+
+    # 5. Tie-break on smallest |Δomega|
+    diff_ome = (omega.unsqueeze(-1) - cand_ome).abs()
+    diff_ome_masked = torch.where(
+        ok, diff_ome, torch.full_like(diff_ome, float("inf"))
+    )
+    best_idx = diff_ome_masked.argmin(dim=-1)                                  # (N, T)
+    has_match = ok.any(dim=-1)                                                  # (N, T)
+
+    # gather chosen candidate id + row + delta
+    matched_id = cand_id.gather(-1, best_idx.unsqueeze(-1)).squeeze(-1)
+    matched_row = spot_rows.gather(-1, best_idx.unsqueeze(-1)).squeeze(-1)
+    delta_ome = diff_ome.gather(-1, best_idx.unsqueeze(-1)).squeeze(-1)
+    matched_id = torch.where(
+        has_match, matched_id, torch.full_like(matched_id, -1)
+    )
+    matched_row = torch.where(
+        has_match, matched_row, torch.full_like(matched_row, -1)
+    )
+    delta_ome = torch.where(
+        has_match, delta_ome, torch.full_like(delta_ome, float("inf"))
+    )
+
+    # 6. Counts. n_matches counts all matches; n_matches_frac_calc excludes
+    # matches in rings_to_reject (matches `nMatchesFracCalc` in C:535-541).
+    matched_for_frac = has_match & ~skip_radial
+    n_matches = has_match.sum(dim=-1).to(torch.int64)
+    n_matches_frac = matched_for_frac.sum(dim=-1).to(torch.int64)
+
+    # nTspotsFracCalc denominator: count valid theor spots not in rejected rings.
+    valid_for_frac = valid & ~skip_radial
+    n_t_frac = valid_for_frac.sum(dim=-1).to(torch.int64).clamp_min(1)
+    frac = n_matches_frac.to(dtype) / n_t_frac.to(dtype)
+
+    # avg_ia: per-tuple internal-angle average between matched theor/obs g-vectors.
+    # Mirrors `CalcIA` from FF_HEDM/src/IndexerOMP.c:1654.
+    if distance is not None and pos is not None:
+        avg_ia = _compute_avg_ia(
+            theor=theor,                            # (N, T, 14)
+            obs=obs,
+            matched_obs_row=matched_row,
+            has_match=has_match,
+            distance=distance,
+            pos=pos,
+        )
+    else:
+        avg_ia = torch.zeros(N, dtype=dtype, device=device)
+
+    return MatchResult(
+        n_matches=n_matches,
+        frac_matches=frac,
+        avg_ia=avg_ia,
+        matched_obs_id=matched_id,
+        matched_obs_row=matched_row,
+        delta_omega=delta_ome,
+        matched=has_match,
+    )
+
+
+def _spot_to_gv_pos(
+    xi: torch.Tensor,           # (..,)
+    yi: torch.Tensor,
+    zi: torch.Tensor,
+    omega_deg: torch.Tensor,
+    cx: torch.Tensor,           # broadcastable
+    cy: torch.Tensor,
+    cz: torch.Tensor,
+) -> torch.Tensor:
+    """Vectorized port of `spot_to_gv_pos` from IndexerOMP.c:748.
+
+    Returns g-vectors as (.., 3). Subtracts the omega-rotated grain position
+    from the spot coordinates, then converts to a unit-sphere reciprocal
+    vector via `spot_to_gv` (line 726).
+    """
+    # RotateAroundZ(c, omega): vr = (cos*cx - sin*cy, sin*cx + cos*cy, cz)
+    co = torch.cos(omega_deg * DEG2RAD)
+    so = torch.sin(omega_deg * DEG2RAD)
+    vr_x = co * cx - so * cy
+    vr_y = so * cx + co * cy
+    vr_z = cz
+    xi = xi - vr_x
+    yi = yi - vr_y
+    zi = zi - vr_z
+    L = torch.sqrt(xi * xi + yi * yi + zi * zi).clamp_min(1e-30)
+    xn = xi / L
+    yn = yi / L
+    zn = zi / L
+    g1r = -1.0 + xn
+    g2r = yn
+    cos_neg = torch.cos(-omega_deg * DEG2RAD)
+    sin_neg = torch.sin(-omega_deg * DEG2RAD)
+    g1 = g1r * cos_neg - g2r * sin_neg
+    g2 = g1r * sin_neg + g2r * cos_neg
+    g3 = zn
+    return torch.stack([g1, g2, g3], dim=-1)
+
+
+def _compute_avg_ia(
+    theor: torch.Tensor,            # (N, T, 14)
+    obs: torch.Tensor,              # (n_obs, 9)
+    matched_obs_row: torch.Tensor,  # (N, T) int64; row index into `obs`, -1 if no match
+    has_match: torch.Tensor,        # (N, T) bool
+    distance: float,
+    pos: torch.Tensor,              # (N, 3) (ga, gb, gc)
+) -> torch.Tensor:
+    """Compute mean internal-angle (degrees) between theor/obs g-vectors per tuple.
+
+    Mirrors `CalcIA` from IndexerOMP.c:1654 + `CalcInternalAngle` from line 253.
+    Unmatched theor spots contribute nothing (C uses 999 sentinel + skip).
+    """
+    N, T, _ = theor.shape
+    device = theor.device
+    dtype = theor.dtype
+
+    # Theor side: y = col 10 (yl_disp), z = col 11 (zl_disp), omega = col 6.
+    theor_y = theor[..., 10]                                          # (N, T)
+    theor_z = theor[..., 11]
+    theor_ome = theor[..., 6]
+    xi_t = torch.full_like(theor_y, distance)
+
+    # Obs side: gather by matched_obs_row (clamp -1 to 0; mask later).
+    safe_row = matched_obs_row.clamp_min(0)
+    obs_y = obs[..., 0][safe_row]                                      # (N, T)
+    obs_z = obs[..., 1][safe_row]
+    obs_ome = obs[..., 2][safe_row]
+    xi_o = torch.full_like(obs_y, distance)
+
+    # Grain position broadcasts to (N, T): cx, cy, cz from `pos[N, 3]`.
+    cx = pos[:, 0:1].expand(N, T)
+    cy = pos[:, 1:2].expand(N, T)
+    cz = pos[:, 2:3].expand(N, T)
+
+    gv1 = _spot_to_gv_pos(xi_t, theor_y, theor_z, theor_ome, cx, cy, cz)  # (N, T, 3)
+    gv2 = _spot_to_gv_pos(xi_o, obs_y, obs_z, obs_ome, cx, cy, cz)
+
+    n1 = torch.linalg.vector_norm(gv1, dim=-1).clamp_min(1e-30)
+    n2 = torch.linalg.vector_norm(gv2, dim=-1).clamp_min(1e-30)
+    cos_ia = (gv1 * gv2).sum(dim=-1) / (n1 * n2)
+    cos_ia = cos_ia.clamp(-1.0, 1.0)
+    ia_deg = torch.acos(cos_ia) * RAD2DEG                              # (N, T)
+
+    # Average over matched spots only. Unmatched -> contribute 0 to numerator
+    # and 0 to denominator (matches C's 999 sentinel skip).
+    ia_abs = ia_deg.abs()
+    masked = torch.where(has_match, ia_abs, torch.zeros_like(ia_abs))
+    n_match = has_match.sum(dim=-1).to(dtype).clamp_min(1.0)
+    return masked.sum(dim=-1) / n_match
+
