@@ -30,6 +30,7 @@ jobs:
           - midas_hkls
           - midas_calibrate
           - midas_diffract
+          - midas_index
 
     steps:
       - uses: actions/checkout@v4
@@ -50,13 +51,25 @@ jobs:
           pip install -e packages/midas_integrate
           pip install -e packages/midas_peakfit
 
+      # midas_index depends on midas_stress (>=0.5.0) and midas_diffract
+      # (>=0.1.1). Both may not yet be on PyPI at those versions; install
+      # the in-repo dev versions first so the resolver finds them locally.
+      - name: Install in-repo sibling MIDAS packages (midas_index only)
+        if: matrix.package == 'midas_index'
+        run: |
+          pip install -e packages/midas_stress
+          pip install -e packages/midas_diffract
+
       - name: Install ${{ matrix.package }} (editable, with dev extras)
         run: pip install -e "packages/${{ matrix.package }}[dev]"
 
       - name: Run tests for ${{ matrix.package }}
         run: |
           cd packages/${{ matrix.package }}
-          python -m pytest tests/ -v --tb=short
+          # `slow`-marked tests (midas-index regression vs C IndexerOMP)
+          # depend on the C binaries which CI doesn't build; skipif handles
+          # that, but we exclude them explicitly here for speed.
+          python -m pytest tests/ -v --tb=short -m "not slow"
 
   # ─── Build + publish: triggered by GitHub release only ────────────────────
   # The tag name selects which package to publish:
@@ -67,6 +80,7 @@ jobs:
   #   midas-hkls-v*       → midas_hkls
   #   midas-calibrate-v*  → midas_calibrate
   #   midas-diffract-v*   → midas_diffract
+  #   midas-index-v*      → midas_index
   #
   # Release tags without one of these prefixes are ignored (no-op build).
   build:
@@ -105,6 +119,9 @@ jobs:
           elif [[ "$TAG" == midas-diffract-v* ]]; then
             echo "package=midas_diffract" >> "$GITHUB_OUTPUT"
             echo "pypi_name=midas-diffract" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == midas-index-v* ]]; then
+            echo "package=midas_index" >> "$GITHUB_OUTPUT"
+            echo "pypi_name=midas-index" >> "$GITHUB_OUTPUT"
           else
             echo "Tag $TAG does not match any known package prefix; skipping."
             echo "package=" >> "$GITHUB_OUTPUT"
