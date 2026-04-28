@@ -10,7 +10,7 @@ callers see no API change. See `tests/test_orientation_torch.py` for
 the parity contract.
 """
 
-__version__ = "0.5.0.dev0"
+__version__ = "0.5.0"
 
 # --- Tensor / Voigt ---
 from .tensor import (
