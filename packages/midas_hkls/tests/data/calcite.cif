@@ -1,0 +1,20 @@
+data_calcite
+_cell_length_a              4.989
+_cell_length_b              4.989
+_cell_length_c              17.062
+_cell_angle_alpha           90.0
+_cell_angle_beta            90.0
+_cell_angle_gamma           120.0
+_space_group_IT_number      167
+_space_group_name_H-M_alt   'R -3 c :H'
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+_atom_site_B_iso_or_equiv
+Ca1 Ca 0.0000 0.0000 0.0000 1.0 0.50
+C1  C  0.0000 0.0000 0.2500 1.0 0.50
+O1  O  0.2569 0.0000 0.2500 1.0 0.80

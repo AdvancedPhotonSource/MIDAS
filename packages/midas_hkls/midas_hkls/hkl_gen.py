@@ -20,6 +20,10 @@ class Reflection:
     two_theta_deg: float
     multiplicity: int
     ring_nr: int = 0
+    # Optional intensity-aware fields populated by structure_factor / intensity helpers.
+    F_real: float | None = None
+    F_imag: float | None = None
+    intensity: float | None = None
 
 
 def _bragg_hkl_max(lattice: Lattice, d_min: float) -> Tuple[int, int, int]:

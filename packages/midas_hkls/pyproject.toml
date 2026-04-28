@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "midas-hkls"
-version = "0.1.0"
-description = "Pure-Python crystallography & HKL list generator. sginfo-equivalent: 230 space groups via Hall-symbol parser."
+version = "0.2.0"
+description = "Pure-Python crystallography, CIF I/O, and differentiable structure factors for X-ray diffraction."
 readme = "README.md"
 license = { text = "BSD-3-Clause" }
 authors = [
@@ -21,8 +21,18 @@ dev = [
     "pytest>=7",
     "pandas>=1.5",
 ]
+torch = [
+    "torch>=2.0",
+]
 cif = [
+    "gemmi>=0.6",
+]
+cif-pure = [
     "pycifrw>=4.4",
+]
+all = [
+    "torch>=2.0",
+    "gemmi>=0.6",
 ]
 
 [project.scripts]
