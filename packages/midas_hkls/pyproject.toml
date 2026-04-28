@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midas-hkls"
+version = "0.1.0"
+description = "Pure-Python crystallography & HKL list generator. sginfo-equivalent: 230 space groups via Hall-symbol parser."
+readme = "README.md"
+license = { text = "BSD-3-Clause" }
+authors = [
+    { name = "MIDAS contributors" },
+]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.22",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pandas>=1.5",
+]
+cif = [
+    "pycifrw>=4.4",
+]
+
+[project.scripts]
+midas-hkls = "midas_hkls.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/marinerhemant/MIDAS"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["midas_hkls*"]
+
+[tool.setuptools.package-data]
+midas_hkls = ["data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"

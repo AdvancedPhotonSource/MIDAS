@@ -8,11 +8,7 @@ dist/
 build/
 .pytest_cache/
 
-# LaTeX aux files (paper/ directory)
-packages/midas_integrate/dev
-packages/midas_peakfit/dev
-packages/midas_stress/dev
-packages/midas_params/dev/
+packages/*/dev
 NF_HEDM/bin/*
 FF_HEDM/bin/*
 NF_HEDM/Cluster/*.kml

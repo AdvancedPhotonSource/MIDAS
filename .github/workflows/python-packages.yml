@@ -14,7 +14,7 @@ on:
     types: [published]
 
 jobs:
-  # ─── Tests run on every push / PR / release for BOTH packages ─────────────
+  # ─── Tests run on every push / PR / release for ALL packages ─────────────
   test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -27,6 +27,9 @@ jobs:
           - midas_params
           - midas_peakfit
           - midas_integrate
+          - midas_hkls
+          - midas_calibrate
+          - midas_diffract
 
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +38,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+      # midas_calibrate depends on three sibling MIDAS packages that may not
+      # yet be on PyPI (or that we want to test against the in-repo version,
+      # not the published one).  Install them as editable from the checkout
+      # first so the dependency resolver finds them locally.
+      - name: Install in-repo sibling MIDAS packages (midas_calibrate only)
+        if: matrix.package == 'midas_calibrate'
+        run: |
+          pip install -e packages/midas_hkls
+          pip install -e packages/midas_integrate
+          pip install -e packages/midas_peakfit
 
       - name: Install ${{ matrix.package }} (editable, with dev extras)
         run: pip install -e "packages/${{ matrix.package }}[dev]"
@@ -50,6 +64,9 @@ jobs:
   #   midas-params-v*     → midas_params
   #   midas-peakfit-v*    → midas_peakfit
   #   midas-integrate-v*  → midas_integrate
+  #   midas-hkls-v*       → midas_hkls
+  #   midas-calibrate-v*  → midas_calibrate
+  #   midas-diffract-v*   → midas_diffract
   #
   # Release tags without one of these prefixes are ignored (no-op build).
   build:
@@ -79,6 +96,15 @@ jobs:
           elif [[ "$TAG" == midas-integrate-v* ]]; then
             echo "package=midas_integrate" >> "$GITHUB_OUTPUT"
             echo "pypi_name=midas-integrate" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == midas-hkls-v* ]]; then
+            echo "package=midas_hkls" >> "$GITHUB_OUTPUT"
+            echo "pypi_name=midas-hkls" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == midas-calibrate-v* ]]; then
+            echo "package=midas_calibrate" >> "$GITHUB_OUTPUT"
+            echo "pypi_name=midas-calibrate" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == midas-diffract-v* ]]; then
+            echo "package=midas_diffract" >> "$GITHUB_OUTPUT"
+            echo "pypi_name=midas-diffract" >> "$GITHUB_OUTPUT"
           else
             echo "Tag $TAG does not match any known package prefix; skipping."
             echo "package=" >> "$GITHUB_OUTPUT"

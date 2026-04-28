@@ -3,18 +3,21 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "midas-stress"
-version = "0.5.0.dev0"
-description = "Crystallographic stress-strain analysis with Voigt-Mandel notation and mechanical equilibrium constraints; torch-native orientation API"
+name = "midas-diffract"
+version = "0.1.0"
+description = "End-to-end differentiable forward model for High-Energy Diffraction Microscopy (FF, NF, pf-HEDM)"
 readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.9"
 authors = [
     {name = "Hemant Sharma", email = "hsharma@anl.gov"},
+    {name = "Simon Zhang"},
+    {name = "Nina Andrejevic"},
+    {name = "Mathew Cherukara"},
 ]
 keywords = [
-    "crystallography", "stress", "strain", "HEDM",
-    "Voigt", "Mandel", "Hooke", "misorientation",
+    "HEDM", "3DXRD", "differentiable physics", "PyTorch",
+    "forward model", "crystallography", "polycrystal", "grain",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -24,15 +27,12 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=1.22",
-    "scipy>=1.8",
     "torch>=2.0",
 ]
 
 [project.optional-dependencies]
-# Kept as a no-op alias for one release for callers who installed via
-# `midas-stress[torch]` in 0.4.x; will be dropped in 0.6.0.
-torch = []
 dev = ["pytest>=7.0", "pytest-cov"]
+hkls = ["midas-hkls>=0.1.0"]
 
 [project.urls]
 Homepage = "https://github.com/marinerhemant/MIDAS"
@@ -41,10 +41,4 @@ Issues = "https://github.com/marinerhemant/MIDAS/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["midas_stress*"]
-
-[tool.setuptools.package-data]
-midas_stress = ["_data/*.csv", "_data/*.h5"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+include = ["midas_diffract*"]

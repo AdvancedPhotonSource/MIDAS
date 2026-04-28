@@ -1,0 +1,4772 @@
+[
+  {
+    "hall_symbol": "P 1",
+    "sg_number": 1,
+    "extension": "",
+    "labels": "P_1",
+    "crystal_system": "triclinic",
+    "laue_class": "-1",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 1",
+    "sg_number": 2,
+    "extension": "",
+    "labels": "P_-1",
+    "crystal_system": "triclinic",
+    "laue_class": "-1",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2y",
+    "sg_number": 3,
+    "extension": "b",
+    "labels": "P_2 = P_1_2_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2",
+    "sg_number": 3,
+    "extension": "c",
+    "labels": "P_2 = P_1_1_2",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2x",
+    "sg_number": 3,
+    "extension": "a",
+    "labels": "P_2 = P_2_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2yb",
+    "sg_number": 4,
+    "extension": "b",
+    "labels": "P_21 = P_1_21_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2c",
+    "sg_number": 4,
+    "extension": "c",
+    "labels": "P_21 = P_1_1_21",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2xa",
+    "sg_number": 4,
+    "extension": "a",
+    "labels": "P_21 = P_21_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "C 2y",
+    "sg_number": 5,
+    "extension": "b1",
+    "labels": "C_2 = C_1_2_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "A 2y",
+    "sg_number": 5,
+    "extension": "b2",
+    "labels": "C_2 = A_1_2_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "I 2y",
+    "sg_number": 5,
+    "extension": "b3",
+    "labels": "C_2 = I_1_2_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "A 2",
+    "sg_number": 5,
+    "extension": "c1",
+    "labels": "C_2 = A_1_1_2",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "B 2",
+    "sg_number": 5,
+    "extension": "c2",
+    "labels": "C_2 = B_1_1_2 = B_2",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "I 2",
+    "sg_number": 5,
+    "extension": "c3",
+    "labels": "C_2 = I_1_1_2",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "B 2x",
+    "sg_number": 5,
+    "extension": "a1",
+    "labels": "C_2 = B_2_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "C 2x",
+    "sg_number": 5,
+    "extension": "a2",
+    "labels": "C_2 = C_2_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "I 2x",
+    "sg_number": 5,
+    "extension": "a3",
+    "labels": "C_2 = I_2_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P -2y",
+    "sg_number": 6,
+    "extension": "b",
+    "labels": "P_m = P_1_m_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2",
+    "sg_number": 6,
+    "extension": "c",
+    "labels": "P_m = P_1_1_m",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2x",
+    "sg_number": 6,
+    "extension": "a",
+    "labels": "P_m = P_m_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2yc",
+    "sg_number": 7,
+    "extension": "b1",
+    "labels": "P_c = P_1_c_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2yac",
+    "sg_number": 7,
+    "extension": "b2",
+    "labels": "P_c = P_1_n_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2ya",
+    "sg_number": 7,
+    "extension": "b3",
+    "labels": "P_c = P_1_a_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2a",
+    "sg_number": 7,
+    "extension": "c1",
+    "labels": "P_c = P_1_1_a",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2ab",
+    "sg_number": 7,
+    "extension": "c2",
+    "labels": "P_c = P_1_1_n",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2b",
+    "sg_number": 7,
+    "extension": "c3",
+    "labels": "P_c = P_1_1_b = P_b",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2xb",
+    "sg_number": 7,
+    "extension": "a1",
+    "labels": "P_c = P_b_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2xbc",
+    "sg_number": 7,
+    "extension": "a2",
+    "labels": "P_c = P_n_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2xc",
+    "sg_number": 7,
+    "extension": "a3",
+    "labels": "P_c = P_c_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "C -2y",
+    "sg_number": 8,
+    "extension": "b1",
+    "labels": "C_m = C_1_m_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "A -2y",
+    "sg_number": 8,
+    "extension": "b2",
+    "labels": "C_m = A_1_m_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "I -2y",
+    "sg_number": 8,
+    "extension": "b3",
+    "labels": "C_m = I_1_m_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "A -2",
+    "sg_number": 8,
+    "extension": "c1",
+    "labels": "C_m = A_1_1_m",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "B -2",
+    "sg_number": 8,
+    "extension": "c2",
+    "labels": "C_m = B_1_1_m = B_m",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "I -2",
+    "sg_number": 8,
+    "extension": "c3",
+    "labels": "C_m = I_1_1_m",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "B -2x",
+    "sg_number": 8,
+    "extension": "a1",
+    "labels": "C_m = B_m_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "C -2x",
+    "sg_number": 8,
+    "extension": "a2",
+    "labels": "C_m = C_m_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "I -2x",
+    "sg_number": 8,
+    "extension": "a3",
+    "labels": "C_m = I_m_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "C -2yc",
+    "sg_number": 9,
+    "extension": "b1",
+    "labels": "C_c = C_1_c_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "A -2yac",
+    "sg_number": 9,
+    "extension": "b2",
+    "labels": "C_c = A_1_n_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "I -2ya",
+    "sg_number": 9,
+    "extension": "b3",
+    "labels": "C_c = I_1_a_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "A -2ya",
+    "sg_number": 9,
+    "extension": "-b1",
+    "labels": "C_c = A_1_a_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "C -2ybc",
+    "sg_number": 9,
+    "extension": "-b2",
+    "labels": "C_c = C_1_n_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "I -2yc",
+    "sg_number": 9,
+    "extension": "-b3",
+    "labels": "C_c = I_1_c_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "A -2a",
+    "sg_number": 9,
+    "extension": "c1",
+    "labels": "C_c = A_1_1_a",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "B -2bc",
+    "sg_number": 9,
+    "extension": "c2",
+    "labels": "C_c = B_1_1_n",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "I -2b",
+    "sg_number": 9,
+    "extension": "c3",
+    "labels": "C_c = I_1_1_b",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "B -2b",
+    "sg_number": 9,
+    "extension": "-c1",
+    "labels": "C_c = B_1_1_b = B_b",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "A -2ac",
+    "sg_number": 9,
+    "extension": "-c2",
+    "labels": "C_c = A_1_1_n",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "I -2a",
+    "sg_number": 9,
+    "extension": "-c3",
+    "labels": "C_c = I_1_1_a",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "B -2xb",
+    "sg_number": 9,
+    "extension": "a1",
+    "labels": "C_c = B_b_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "C -2xbc",
+    "sg_number": 9,
+    "extension": "a2",
+    "labels": "C_c = C_n_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "I -2xc",
+    "sg_number": 9,
+    "extension": "a3",
+    "labels": "C_c = I_c_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "C -2xc",
+    "sg_number": 9,
+    "extension": "-a1",
+    "labels": "C_c = C_c_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "B -2xbc",
+    "sg_number": 9,
+    "extension": "-a2",
+    "labels": "C_c = B_n_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "I -2xb",
+    "sg_number": 9,
+    "extension": "-a3",
+    "labels": "C_c = I_b_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-P 2y",
+    "sg_number": 10,
+    "extension": "b",
+    "labels": "P_2/m = P_1_2/m_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2",
+    "sg_number": 10,
+    "extension": "c",
+    "labels": "P_2/m = P_1_1_2/m",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2x",
+    "sg_number": 10,
+    "extension": "a",
+    "labels": "P_2/m = P_2/m_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2yb",
+    "sg_number": 11,
+    "extension": "b",
+    "labels": "P_21/m = P_1_21/m_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2c",
+    "sg_number": 11,
+    "extension": "c",
+    "labels": "P_21/m = P_1_1_21/m",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2xa",
+    "sg_number": 11,
+    "extension": "a",
+    "labels": "P_21/m = P_21/m_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-C 2y",
+    "sg_number": 12,
+    "extension": "b1",
+    "labels": "C_2/m = C_1_2/m_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-A 2y",
+    "sg_number": 12,
+    "extension": "b2",
+    "labels": "C_2/m = A_1_2/m_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-I 2y",
+    "sg_number": 12,
+    "extension": "b3",
+    "labels": "C_2/m = I_1_2/m_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-A 2",
+    "sg_number": 12,
+    "extension": "c1",
+    "labels": "C_2/m = A_1_1_2/m",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-B 2",
+    "sg_number": 12,
+    "extension": "c2",
+    "labels": "C_2/m = B_1_1_2/m = B_2/m",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-I 2",
+    "sg_number": 12,
+    "extension": "c3",
+    "labels": "C_2/m = I_1_1_2/m",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-B 2x",
+    "sg_number": 12,
+    "extension": "a1",
+    "labels": "C_2/m = B_2/m_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-C 2x",
+    "sg_number": 12,
+    "extension": "a2",
+    "labels": "C_2/m = C_2/m_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-I 2x",
+    "sg_number": 12,
+    "extension": "a3",
+    "labels": "C_2/m = I_2/m_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-P 2yc",
+    "sg_number": 13,
+    "extension": "b1",
+    "labels": "P_2/c = P_1_2/c_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2yac",
+    "sg_number": 13,
+    "extension": "b2",
+    "labels": "P_2/c = P_1_2/n_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ya",
+    "sg_number": 13,
+    "extension": "b3",
+    "labels": "P_2/c = P_1_2/a_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2a",
+    "sg_number": 13,
+    "extension": "c1",
+    "labels": "P_2/c = P_1_1_2/a",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ab",
+    "sg_number": 13,
+    "extension": "c2",
+    "labels": "P_2/c = P_1_1_2/n",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2b",
+    "sg_number": 13,
+    "extension": "c3",
+    "labels": "P_2/c = P_1_1_2/b = P_2/b",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2xb",
+    "sg_number": 13,
+    "extension": "a1",
+    "labels": "P_2/c = P_2/b_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2xbc",
+    "sg_number": 13,
+    "extension": "a2",
+    "labels": "P_2/c = P_2/n_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2xc",
+    "sg_number": 13,
+    "extension": "a3",
+    "labels": "P_2/c = P_2/c_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ybc",
+    "sg_number": 14,
+    "extension": "b1",
+    "labels": "P_21/c = P_1_21/c_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2yn",
+    "sg_number": 14,
+    "extension": "b2",
+    "labels": "P_21/c = P_1_21/n_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2yab",
+    "sg_number": 14,
+    "extension": "b3",
+    "labels": "P_21/c = P_1_21/a_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ac",
+    "sg_number": 14,
+    "extension": "c1",
+    "labels": "P_21/c = P_1_1_21/a",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2n",
+    "sg_number": 14,
+    "extension": "c2",
+    "labels": "P_21/c = P_1_1_21/n",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2bc",
+    "sg_number": 14,
+    "extension": "c3",
+    "labels": "P_21/c = P_1_1_21/b = P_21/b",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2xab",
+    "sg_number": 14,
+    "extension": "a1",
+    "labels": "P_21/c = P_21/b_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2xn",
+    "sg_number": 14,
+    "extension": "a2",
+    "labels": "P_21/c = P_21/n_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2xac",
+    "sg_number": 14,
+    "extension": "a3",
+    "labels": "P_21/c = P_21/c_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-C 2yc",
+    "sg_number": 15,
+    "extension": "b1",
+    "labels": "C_2/c = C_1_2/c_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-A 2yac",
+    "sg_number": 15,
+    "extension": "b2",
+    "labels": "C_2/c = A_1_2/n_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-I 2ya",
+    "sg_number": 15,
+    "extension": "b3",
+    "labels": "C_2/c = I_1_2/a_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-A 2ya",
+    "sg_number": 15,
+    "extension": "-b1",
+    "labels": "C_2/c = A_1_2/a_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-C 2ybc",
+    "sg_number": 15,
+    "extension": "-b2",
+    "labels": "C_2/c = C_1_2/n_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-I 2yc",
+    "sg_number": 15,
+    "extension": "-b3",
+    "labels": "C_2/c = I_1_2/c_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-A 2a",
+    "sg_number": 15,
+    "extension": "c1",
+    "labels": "C_2/c = A_1_1_2/a",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-B 2bc",
+    "sg_number": 15,
+    "extension": "c2",
+    "labels": "C_2/c = B_1_1_2/n",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-I 2b",
+    "sg_number": 15,
+    "extension": "c3",
+    "labels": "C_2/c = I_1_1_2/b",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-B 2b",
+    "sg_number": 15,
+    "extension": "-c1",
+    "labels": "C_2/c = B_1_1_2/b = B_2/b",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-A 2ac",
+    "sg_number": 15,
+    "extension": "-c2",
+    "labels": "C_2/c = A_1_1_2/n",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-I 2a",
+    "sg_number": 15,
+    "extension": "-c3",
+    "labels": "C_2/c = I_1_1_2/a",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-B 2xb",
+    "sg_number": 15,
+    "extension": "a1",
+    "labels": "C_2/c = B_2/b_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-C 2xbc",
+    "sg_number": 15,
+    "extension": "a2",
+    "labels": "C_2/c = C_2/n_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-I 2xc",
+    "sg_number": 15,
+    "extension": "a3",
+    "labels": "C_2/c = I_2/c_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-C 2xc",
+    "sg_number": 15,
+    "extension": "-a1",
+    "labels": "C_2/c = C_2/c_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-B 2xbc",
+    "sg_number": 15,
+    "extension": "-a2",
+    "labels": "C_2/c = B_2/n_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-I 2xb",
+    "sg_number": 15,
+    "extension": "-a3",
+    "labels": "C_2/c = I_2/b_1_1",
+    "crystal_system": "monoclinic",
+    "laue_class": "2/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P 2 2",
+    "sg_number": 16,
+    "extension": "",
+    "labels": "P_2_2_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2c 2",
+    "sg_number": 17,
+    "extension": "",
+    "labels": "P_2_2_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2a 2a",
+    "sg_number": 17,
+    "extension": "cab",
+    "labels": "P_21_2_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 2b",
+    "sg_number": 17,
+    "extension": "bca",
+    "labels": "P_2_21_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 2ab",
+    "sg_number": 18,
+    "extension": "",
+    "labels": "P_21_21_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2bc 2",
+    "sg_number": 18,
+    "extension": "cab",
+    "labels": "P_2_21_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2ac 2ac",
+    "sg_number": 18,
+    "extension": "bca",
+    "labels": "P_21_2_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2ac 2ab",
+    "sg_number": 19,
+    "extension": "",
+    "labels": "P_21_21_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "C 2c 2",
+    "sg_number": 20,
+    "extension": "",
+    "labels": "C_2_2_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "A 2a 2a",
+    "sg_number": 20,
+    "extension": "cab",
+    "labels": "A_21_2_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "B 2 2b",
+    "sg_number": 20,
+    "extension": "bca",
+    "labels": "B_2_21_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "C 2 2",
+    "sg_number": 21,
+    "extension": "",
+    "labels": "C_2_2_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "A 2 2",
+    "sg_number": 21,
+    "extension": "cab",
+    "labels": "A_2_2_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "B 2 2",
+    "sg_number": 21,
+    "extension": "bca",
+    "labels": "B_2_2_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "F 2 2",
+    "sg_number": 22,
+    "extension": "",
+    "labels": "F_2_2_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "I 2 2",
+    "sg_number": 23,
+    "extension": "",
+    "labels": "I_2_2_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I 2b 2c",
+    "sg_number": 24,
+    "extension": "",
+    "labels": "I_21_21_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P 2 -2",
+    "sg_number": 25,
+    "extension": "",
+    "labels": "P_m_m_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2 2",
+    "sg_number": 25,
+    "extension": "cab",
+    "labels": "P_2_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2 -2",
+    "sg_number": 25,
+    "extension": "bca",
+    "labels": "P_m_2_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2c -2",
+    "sg_number": 26,
+    "extension": "",
+    "labels": "P_m_c_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2c -2c",
+    "sg_number": 26,
+    "extension": "ba-c",
+    "labels": "P_c_m_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2a 2a",
+    "sg_number": 26,
+    "extension": "cab",
+    "labels": "P_21_m_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2 2a",
+    "sg_number": 26,
+    "extension": "-cba",
+    "labels": "P_21_a_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2 -2b",
+    "sg_number": 26,
+    "extension": "bca",
+    "labels": "P_b_21_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2b -2",
+    "sg_number": 26,
+    "extension": "a-cb",
+    "labels": "P_m_21_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 -2c",
+    "sg_number": 27,
+    "extension": "",
+    "labels": "P_c_c_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2a 2",
+    "sg_number": 27,
+    "extension": "cab",
+    "labels": "P_2_a_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2b -2b",
+    "sg_number": 27,
+    "extension": "bca",
+    "labels": "P_b_2_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 -2a",
+    "sg_number": 28,
+    "extension": "",
+    "labels": "P_m_a_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 -2b",
+    "sg_number": 28,
+    "extension": "ba-c",
+    "labels": "P_b_m_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2b 2",
+    "sg_number": 28,
+    "extension": "cab",
+    "labels": "P_2_m_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2c 2",
+    "sg_number": 28,
+    "extension": "-cba",
+    "labels": "P_2_c_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2c -2c",
+    "sg_number": 28,
+    "extension": "bca",
+    "labels": "P_c_2_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2a -2a",
+    "sg_number": 28,
+    "extension": "a-cb",
+    "labels": "P_m_2_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2c -2ac",
+    "sg_number": 29,
+    "extension": "",
+    "labels": "P_c_a_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2c -2b",
+    "sg_number": 29,
+    "extension": "ba-c",
+    "labels": "P_b_c_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2b 2a",
+    "sg_number": 29,
+    "extension": "cab",
+    "labels": "P_21_a_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2ac 2a",
+    "sg_number": 29,
+    "extension": "-cba",
+    "labels": "P_21_c_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2bc -2c",
+    "sg_number": 29,
+    "extension": "bca",
+    "labels": "P_c_21_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2a -2ab",
+    "sg_number": 29,
+    "extension": "a-cb",
+    "labels": "P_b_21_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 -2bc",
+    "sg_number": 30,
+    "extension": "",
+    "labels": "P_n_c_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 -2ac",
+    "sg_number": 30,
+    "extension": "ba-c",
+    "labels": "P_c_n_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2ac 2",
+    "sg_number": 30,
+    "extension": "cab",
+    "labels": "P_2_n_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2ab 2",
+    "sg_number": 30,
+    "extension": "-cba",
+    "labels": "P_2_a_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2ab -2ab",
+    "sg_number": 30,
+    "extension": "bca",
+    "labels": "P_b_2_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2bc -2bc",
+    "sg_number": 30,
+    "extension": "a-cb",
+    "labels": "P_n_2_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2ac -2",
+    "sg_number": 31,
+    "extension": "",
+    "labels": "P_m_n_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2bc -2bc",
+    "sg_number": 31,
+    "extension": "ba-c",
+    "labels": "P_n_m_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2ab 2ab",
+    "sg_number": 31,
+    "extension": "cab",
+    "labels": "P_21_m_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2 2ac",
+    "sg_number": 31,
+    "extension": "-cba",
+    "labels": "P_21_n_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2 -2bc",
+    "sg_number": 31,
+    "extension": "bca",
+    "labels": "P_n_21_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2ab -2",
+    "sg_number": 31,
+    "extension": "a-cb",
+    "labels": "P_m_21_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 -2ab",
+    "sg_number": 32,
+    "extension": "",
+    "labels": "P_b_a_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2bc 2",
+    "sg_number": 32,
+    "extension": "cab",
+    "labels": "P_2_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2ac -2ac",
+    "sg_number": 32,
+    "extension": "bca",
+    "labels": "P_c_2_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2c -2n",
+    "sg_number": 33,
+    "extension": "",
+    "labels": "P_n_a_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2c -2ab",
+    "sg_number": 33,
+    "extension": "ba-c",
+    "labels": "P_b_n_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2bc 2a",
+    "sg_number": 33,
+    "extension": "cab",
+    "labels": "P_21_n_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2n 2a",
+    "sg_number": 33,
+    "extension": "-cba",
+    "labels": "P_21_c_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2n -2ac",
+    "sg_number": 33,
+    "extension": "bca",
+    "labels": "P_c_21_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2ac -2n",
+    "sg_number": 33,
+    "extension": "a-cb",
+    "labels": "P_n_21_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 -2n",
+    "sg_number": 34,
+    "extension": "",
+    "labels": "P_n_n_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2n 2",
+    "sg_number": 34,
+    "extension": "cab",
+    "labels": "P_2_n_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -2n -2n",
+    "sg_number": 34,
+    "extension": "bca",
+    "labels": "P_n_2_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "C 2 -2",
+    "sg_number": 35,
+    "extension": "",
+    "labels": "C_m_m_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "A -2 2",
+    "sg_number": 35,
+    "extension": "cab",
+    "labels": "A_2_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "B -2 -2",
+    "sg_number": 35,
+    "extension": "bca",
+    "labels": "B_m_2_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "C 2c -2",
+    "sg_number": 36,
+    "extension": "",
+    "labels": "C_m_c_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "C 2c -2c",
+    "sg_number": 36,
+    "extension": "ba-c",
+    "labels": "C_c_m_21",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "A -2a 2a",
+    "sg_number": 36,
+    "extension": "cab",
+    "labels": "A_21_m_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "A -2 2a",
+    "sg_number": 36,
+    "extension": "-cba",
+    "labels": "A_21_a_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "B -2 -2b",
+    "sg_number": 36,
+    "extension": "bca",
+    "labels": "B_b_21_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "B -2b -2",
+    "sg_number": 36,
+    "extension": "a-cb",
+    "labels": "B_m_21_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "C 2 -2c",
+    "sg_number": 37,
+    "extension": "",
+    "labels": "C_c_c_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "A -2a 2",
+    "sg_number": 37,
+    "extension": "cab",
+    "labels": "A_2_a_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "B -2b -2b",
+    "sg_number": 37,
+    "extension": "bca",
+    "labels": "B_b_2_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "A 2 -2",
+    "sg_number": 38,
+    "extension": "",
+    "labels": "A_m_m_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "B 2 -2",
+    "sg_number": 38,
+    "extension": "ba-c",
+    "labels": "B_m_m_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "B -2 2",
+    "sg_number": 38,
+    "extension": "cab",
+    "labels": "B_2_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "C -2 2",
+    "sg_number": 38,
+    "extension": "-cba",
+    "labels": "C_2_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "C -2 -2",
+    "sg_number": 38,
+    "extension": "bca",
+    "labels": "C_m_2_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "A -2 -2",
+    "sg_number": 38,
+    "extension": "a-cb",
+    "labels": "A_m_2_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "A 2 -2c",
+    "sg_number": 39,
+    "extension": "",
+    "labels": "A_b_m_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "B 2 -2c",
+    "sg_number": 39,
+    "extension": "ba-c",
+    "labels": "B_m_a_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "B -2c 2",
+    "sg_number": 39,
+    "extension": "cab",
+    "labels": "B_2_c_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "C -2b 2",
+    "sg_number": 39,
+    "extension": "-cba",
+    "labels": "C_2_m_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "C -2b -2b",
+    "sg_number": 39,
+    "extension": "bca",
+    "labels": "C_m_2_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "A -2c -2c",
+    "sg_number": 39,
+    "extension": "a-cb",
+    "labels": "A_c_2_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "A 2 -2a",
+    "sg_number": 40,
+    "extension": "",
+    "labels": "A_m_a_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "B 2 -2b",
+    "sg_number": 40,
+    "extension": "ba-c",
+    "labels": "B_b_m_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "B -2b 2",
+    "sg_number": 40,
+    "extension": "cab",
+    "labels": "B_2_m_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "C -2c 2",
+    "sg_number": 40,
+    "extension": "-cba",
+    "labels": "C_2_c_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "C -2c -2c",
+    "sg_number": 40,
+    "extension": "bca",
+    "labels": "C_c_2_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "A -2a -2a",
+    "sg_number": 40,
+    "extension": "a-cb",
+    "labels": "A_m_2_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "A 2 -2ac",
+    "sg_number": 41,
+    "extension": "",
+    "labels": "A_b_a_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "B 2 -2bc",
+    "sg_number": 41,
+    "extension": "ba-c",
+    "labels": "B_b_a_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "B -2bc 2",
+    "sg_number": 41,
+    "extension": "cab",
+    "labels": "B_2_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "C -2bc 2",
+    "sg_number": 41,
+    "extension": "-cba",
+    "labels": "C_2_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "C -2bc -2bc",
+    "sg_number": 41,
+    "extension": "bca",
+    "labels": "C_c_2_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "A -2ac -2ac",
+    "sg_number": 41,
+    "extension": "a-cb",
+    "labels": "A_c_2_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "F 2 -2",
+    "sg_number": 42,
+    "extension": "",
+    "labels": "F_m_m_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "F -2 2",
+    "sg_number": 42,
+    "extension": "cab",
+    "labels": "F_2_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "F -2 -2",
+    "sg_number": 42,
+    "extension": "bca",
+    "labels": "F_m_2_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "F 2 -2d",
+    "sg_number": 43,
+    "extension": "",
+    "labels": "F_d_d_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "F -2d 2",
+    "sg_number": 43,
+    "extension": "cab",
+    "labels": "F_2_d_d",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "F -2d -2d",
+    "sg_number": 43,
+    "extension": "bca",
+    "labels": "F_d_2_d",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "I 2 -2",
+    "sg_number": 44,
+    "extension": "",
+    "labels": "I_m_m_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I -2 2",
+    "sg_number": 44,
+    "extension": "cab",
+    "labels": "I_2_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I -2 -2",
+    "sg_number": 44,
+    "extension": "bca",
+    "labels": "I_m_2_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I 2 -2c",
+    "sg_number": 45,
+    "extension": "",
+    "labels": "I_b_a_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I -2a 2",
+    "sg_number": 45,
+    "extension": "cab",
+    "labels": "I_2_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I -2b -2b",
+    "sg_number": 45,
+    "extension": "bca",
+    "labels": "I_c_2_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I 2 -2a",
+    "sg_number": 46,
+    "extension": "",
+    "labels": "I_m_a_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I 2 -2b",
+    "sg_number": 46,
+    "extension": "ba-c",
+    "labels": "I_b_m_2",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I -2b 2",
+    "sg_number": 46,
+    "extension": "cab",
+    "labels": "I_2_m_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I -2c 2",
+    "sg_number": 46,
+    "extension": "-cba",
+    "labels": "I_2_c_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I -2c -2c",
+    "sg_number": 46,
+    "extension": "bca",
+    "labels": "I_c_2_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I -2a -2a",
+    "sg_number": 46,
+    "extension": "a-cb",
+    "labels": "I_m_2_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-P 2 2",
+    "sg_number": 47,
+    "extension": "",
+    "labels": "P_m_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 2 -1n",
+    "sg_number": 48,
+    "extension": "1",
+    "labels": "P_n_n_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ab 2bc",
+    "sg_number": 48,
+    "extension": "2",
+    "labels": "P_n_n_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2 2c",
+    "sg_number": 49,
+    "extension": "",
+    "labels": "P_c_c_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2a 2",
+    "sg_number": 49,
+    "extension": "cab",
+    "labels": "P_m_a_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2b 2b",
+    "sg_number": 49,
+    "extension": "bca",
+    "labels": "P_b_m_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 2 -1ab",
+    "sg_number": 50,
+    "extension": "1",
+    "labels": "P_b_a_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ab 2b",
+    "sg_number": 50,
+    "extension": "2",
+    "labels": "P_b_a_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 2 -1bc",
+    "sg_number": 50,
+    "extension": "1cab",
+    "labels": "P_n_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2b 2bc",
+    "sg_number": 50,
+    "extension": "2cab",
+    "labels": "P_n_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 2 -1ac",
+    "sg_number": 50,
+    "extension": "1bca",
+    "labels": "P_c_n_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2a 2c",
+    "sg_number": 50,
+    "extension": "2bca",
+    "labels": "P_c_n_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2a 2a",
+    "sg_number": 51,
+    "extension": "",
+    "labels": "P_m_m_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2b 2",
+    "sg_number": 51,
+    "extension": "ba-c",
+    "labels": "P_m_m_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2 2b",
+    "sg_number": 51,
+    "extension": "cab",
+    "labels": "P_b_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2c 2c",
+    "sg_number": 51,
+    "extension": "-cba",
+    "labels": "P_c_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2c 2",
+    "sg_number": 51,
+    "extension": "bca",
+    "labels": "P_m_c_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2 2a",
+    "sg_number": 51,
+    "extension": "a-cb",
+    "labels": "P_m_a_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2a 2bc",
+    "sg_number": 52,
+    "extension": "",
+    "labels": "P_n_n_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2b 2n",
+    "sg_number": 52,
+    "extension": "ba-c",
+    "labels": "P_n_n_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2n 2b",
+    "sg_number": 52,
+    "extension": "cab",
+    "labels": "P_b_n_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ab 2c",
+    "sg_number": 52,
+    "extension": "-cba",
+    "labels": "P_c_n_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ab 2n",
+    "sg_number": 52,
+    "extension": "bca",
+    "labels": "P_n_c_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2n 2bc",
+    "sg_number": 52,
+    "extension": "a-cb",
+    "labels": "P_n_a_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ac 2",
+    "sg_number": 53,
+    "extension": "",
+    "labels": "P_m_n_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2bc 2bc",
+    "sg_number": 53,
+    "extension": "ba-c",
+    "labels": "P_n_m_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ab 2ab",
+    "sg_number": 53,
+    "extension": "cab",
+    "labels": "P_b_m_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2 2ac",
+    "sg_number": 53,
+    "extension": "-cba",
+    "labels": "P_c_n_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2 2bc",
+    "sg_number": 53,
+    "extension": "bca",
+    "labels": "P_n_c_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ab 2",
+    "sg_number": 53,
+    "extension": "a-cb",
+    "labels": "P_m_a_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2a 2ac",
+    "sg_number": 54,
+    "extension": "",
+    "labels": "P_c_c_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2b 2c",
+    "sg_number": 54,
+    "extension": "ba-c",
+    "labels": "P_c_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2a 2b",
+    "sg_number": 54,
+    "extension": "cab",
+    "labels": "P_b_a_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ac 2c",
+    "sg_number": 54,
+    "extension": "-cba",
+    "labels": "P_c_a_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2bc 2b",
+    "sg_number": 54,
+    "extension": "bca",
+    "labels": "P_b_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2b 2ab",
+    "sg_number": 54,
+    "extension": "a-cb",
+    "labels": "P_b_a_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2 2ab",
+    "sg_number": 55,
+    "extension": "",
+    "labels": "P_b_a_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2bc 2",
+    "sg_number": 55,
+    "extension": "cab",
+    "labels": "P_m_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ac 2ac",
+    "sg_number": 55,
+    "extension": "bca",
+    "labels": "P_c_m_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ab 2ac",
+    "sg_number": 56,
+    "extension": "",
+    "labels": "P_c_c_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ac 2bc",
+    "sg_number": 56,
+    "extension": "cab",
+    "labels": "P_n_a_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2bc 2ab",
+    "sg_number": 56,
+    "extension": "bca",
+    "labels": "P_b_n_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2c 2b",
+    "sg_number": 57,
+    "extension": "",
+    "labels": "P_b_c_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2c 2ac",
+    "sg_number": 57,
+    "extension": "ba-c",
+    "labels": "P_c_a_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ac 2a",
+    "sg_number": 57,
+    "extension": "cab",
+    "labels": "P_m_c_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2b 2a",
+    "sg_number": 57,
+    "extension": "-cba",
+    "labels": "P_m_a_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2a 2ab",
+    "sg_number": 57,
+    "extension": "bca",
+    "labels": "P_b_m_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2bc 2c",
+    "sg_number": 57,
+    "extension": "a-cb",
+    "labels": "P_c_m_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2 2n",
+    "sg_number": 58,
+    "extension": "",
+    "labels": "P_n_n_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2n 2",
+    "sg_number": 58,
+    "extension": "cab",
+    "labels": "P_m_n_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2n 2n",
+    "sg_number": 58,
+    "extension": "bca",
+    "labels": "P_n_m_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 2ab -1ab",
+    "sg_number": 59,
+    "extension": "1",
+    "labels": "P_m_m_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ab 2a",
+    "sg_number": 59,
+    "extension": "2",
+    "labels": "P_m_m_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2bc 2 -1bc",
+    "sg_number": 59,
+    "extension": "1cab",
+    "labels": "P_n_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2c 2bc",
+    "sg_number": 59,
+    "extension": "2cab",
+    "labels": "P_n_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2ac 2ac -1ac",
+    "sg_number": 59,
+    "extension": "1bca",
+    "labels": "P_m_n_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2c 2a",
+    "sg_number": 59,
+    "extension": "2bca",
+    "labels": "P_m_n_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2n 2ab",
+    "sg_number": 60,
+    "extension": "",
+    "labels": "P_b_c_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2n 2c",
+    "sg_number": 60,
+    "extension": "ba-c",
+    "labels": "P_c_a_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2a 2n",
+    "sg_number": 60,
+    "extension": "cab",
+    "labels": "P_n_c_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2bc 2n",
+    "sg_number": 60,
+    "extension": "-cba",
+    "labels": "P_n_a_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ac 2b",
+    "sg_number": 60,
+    "extension": "bca",
+    "labels": "P_b_n_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2b 2ac",
+    "sg_number": 60,
+    "extension": "a-cb",
+    "labels": "P_c_n_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ac 2ab",
+    "sg_number": 61,
+    "extension": "",
+    "labels": "P_b_c_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2bc 2ac",
+    "sg_number": 61,
+    "extension": "ba-c",
+    "labels": "P_c_a_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ac 2n",
+    "sg_number": 62,
+    "extension": "",
+    "labels": "P_n_m_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2bc 2a",
+    "sg_number": 62,
+    "extension": "ba-c",
+    "labels": "P_m_n_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2c 2ab",
+    "sg_number": 62,
+    "extension": "cab",
+    "labels": "P_b_n_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2n 2ac",
+    "sg_number": 62,
+    "extension": "-cba",
+    "labels": "P_c_m_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2n 2a",
+    "sg_number": 62,
+    "extension": "bca",
+    "labels": "P_m_c_n",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2c 2n",
+    "sg_number": 62,
+    "extension": "a-cb",
+    "labels": "P_n_a_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-C 2c 2",
+    "sg_number": 63,
+    "extension": "",
+    "labels": "C_m_c_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-C 2c 2c",
+    "sg_number": 63,
+    "extension": "ba-c",
+    "labels": "C_c_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-A 2a 2a",
+    "sg_number": 63,
+    "extension": "cab",
+    "labels": "A_m_m_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-A 2 2a",
+    "sg_number": 63,
+    "extension": "-cba",
+    "labels": "A_m_a_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-B 2 2b",
+    "sg_number": 63,
+    "extension": "bca",
+    "labels": "B_b_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-B 2b 2",
+    "sg_number": 63,
+    "extension": "a-cb",
+    "labels": "B_m_m_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-C 2bc 2",
+    "sg_number": 64,
+    "extension": "",
+    "labels": "C_m_c_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-C 2bc 2bc",
+    "sg_number": 64,
+    "extension": "ba-c",
+    "labels": "C_c_m_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-A 2ac 2ac",
+    "sg_number": 64,
+    "extension": "cab",
+    "labels": "A_b_m_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-A 2 2ac",
+    "sg_number": 64,
+    "extension": "-cba",
+    "labels": "A_c_a_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-B 2 2bc",
+    "sg_number": 64,
+    "extension": "bca",
+    "labels": "B_b_c_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-B 2bc 2",
+    "sg_number": 64,
+    "extension": "a-cb",
+    "labels": "B_m_a_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-C 2 2",
+    "sg_number": 65,
+    "extension": "",
+    "labels": "C_m_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-A 2 2",
+    "sg_number": 65,
+    "extension": "cab",
+    "labels": "A_m_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-B 2 2",
+    "sg_number": 65,
+    "extension": "bca",
+    "labels": "B_m_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-C 2 2c",
+    "sg_number": 66,
+    "extension": "",
+    "labels": "C_c_c_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-A 2a 2",
+    "sg_number": 66,
+    "extension": "cab",
+    "labels": "A_m_a_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-B 2b 2b",
+    "sg_number": 66,
+    "extension": "bca",
+    "labels": "B_b_m_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-C 2b 2",
+    "sg_number": 67,
+    "extension": "",
+    "labels": "C_m_m_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-C 2b 2b",
+    "sg_number": 67,
+    "extension": "ba-c",
+    "labels": "C_m_m_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-A 2c 2c",
+    "sg_number": 67,
+    "extension": "cab",
+    "labels": "A_b_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-A 2 2c",
+    "sg_number": 67,
+    "extension": "-cba",
+    "labels": "A_c_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-B 2 2c",
+    "sg_number": 67,
+    "extension": "bca",
+    "labels": "B_m_c_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-B 2c 2",
+    "sg_number": 67,
+    "extension": "a-cb",
+    "labels": "B_m_a_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "C 2 2 -1bc",
+    "sg_number": 68,
+    "extension": "1",
+    "labels": "C_c_c_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-C 2b 2bc",
+    "sg_number": 68,
+    "extension": "2",
+    "labels": "C_c_c_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "C 2 2 -1bc",
+    "sg_number": 68,
+    "extension": "1ba-c",
+    "labels": "C_c_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "-C 2b 2c",
+    "sg_number": 68,
+    "extension": "2ba-c",
+    "labels": "C_c_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "C"
+  },
+  {
+    "hall_symbol": "A 2 2 -1ac",
+    "sg_number": 68,
+    "extension": "1cab",
+    "labels": "A_b_a_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-A 2a 2c",
+    "sg_number": 68,
+    "extension": "2cab",
+    "labels": "A_b_a_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "A 2 2 -1ac",
+    "sg_number": 68,
+    "extension": "1-cba",
+    "labels": "A_c_a_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "-A 2ac 2c",
+    "sg_number": 68,
+    "extension": "2-cba",
+    "labels": "A_c_a_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "A"
+  },
+  {
+    "hall_symbol": "B 2 2 -1bc",
+    "sg_number": 68,
+    "extension": "1bca",
+    "labels": "B_b_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-B 2bc 2b",
+    "sg_number": 68,
+    "extension": "2bca",
+    "labels": "B_b_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "B 2 2 -1bc",
+    "sg_number": 68,
+    "extension": "1a-cb",
+    "labels": "B_b_a_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-B 2b 2bc",
+    "sg_number": 68,
+    "extension": "2a-cb",
+    "labels": "B_b_a_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "B"
+  },
+  {
+    "hall_symbol": "-F 2 2",
+    "sg_number": 69,
+    "extension": "",
+    "labels": "F_m_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "F 2 2 -1d",
+    "sg_number": 70,
+    "extension": "1",
+    "labels": "F_d_d_d",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "-F 2uv 2vw",
+    "sg_number": 70,
+    "extension": "2",
+    "labels": "F_d_d_d",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "-I 2 2",
+    "sg_number": 71,
+    "extension": "",
+    "labels": "I_m_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 2 2c",
+    "sg_number": 72,
+    "extension": "",
+    "labels": "I_b_a_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 2a 2",
+    "sg_number": 72,
+    "extension": "cab",
+    "labels": "I_m_c_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 2b 2b",
+    "sg_number": 72,
+    "extension": "bca",
+    "labels": "I_c_m_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 2b 2c",
+    "sg_number": 73,
+    "extension": "",
+    "labels": "I_b_c_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 2a 2b",
+    "sg_number": 73,
+    "extension": "ba-c",
+    "labels": "I_c_a_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 2b 2",
+    "sg_number": 74,
+    "extension": "",
+    "labels": "I_m_m_a",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 2a 2a",
+    "sg_number": 74,
+    "extension": "ba-c",
+    "labels": "I_m_m_b",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 2c 2c",
+    "sg_number": 74,
+    "extension": "cab",
+    "labels": "I_b_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 2 2b",
+    "sg_number": 74,
+    "extension": "-cba",
+    "labels": "I_c_m_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 2 2a",
+    "sg_number": 74,
+    "extension": "bca",
+    "labels": "I_m_c_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 2c 2",
+    "sg_number": 74,
+    "extension": "a-cb",
+    "labels": "I_m_a_m",
+    "crystal_system": "orthorhombic",
+    "laue_class": "mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P 4",
+    "sg_number": 75,
+    "extension": "",
+    "labels": "P_4",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4w",
+    "sg_number": 76,
+    "extension": "",
+    "labels": "P_41",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4c",
+    "sg_number": 77,
+    "extension": "",
+    "labels": "P_42",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4cw",
+    "sg_number": 78,
+    "extension": "",
+    "labels": "P_43",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "I 4",
+    "sg_number": 79,
+    "extension": "",
+    "labels": "I_4",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I 4bw",
+    "sg_number": 80,
+    "extension": "",
+    "labels": "I_41",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P -4",
+    "sg_number": 81,
+    "extension": "",
+    "labels": "P_-4",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "I -4",
+    "sg_number": 82,
+    "extension": "",
+    "labels": "I_-4",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-P 4",
+    "sg_number": 83,
+    "extension": "",
+    "labels": "P_4/m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4c",
+    "sg_number": 84,
+    "extension": "",
+    "labels": "P_42/m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4ab -1ab",
+    "sg_number": 85,
+    "extension": "1",
+    "labels": "P_4/n",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4a",
+    "sg_number": 85,
+    "extension": "2",
+    "labels": "P_4/n",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4n -1n",
+    "sg_number": 86,
+    "extension": "1",
+    "labels": "P_42/n",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4bc",
+    "sg_number": 86,
+    "extension": "2",
+    "labels": "P_42/n",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-I 4",
+    "sg_number": 87,
+    "extension": "",
+    "labels": "I_4/m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I 4bw -1bw",
+    "sg_number": 88,
+    "extension": "1",
+    "labels": "I_41/a",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 4ad",
+    "sg_number": 88,
+    "extension": "2",
+    "labels": "I_41/a",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P 4 2",
+    "sg_number": 89,
+    "extension": "",
+    "labels": "P_4_2_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4ab 2ab",
+    "sg_number": 90,
+    "extension": "",
+    "labels": "P_42_1_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4w 2c",
+    "sg_number": 91,
+    "extension": "",
+    "labels": "P_41_2_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4abw 2nw",
+    "sg_number": 92,
+    "extension": "",
+    "labels": "P_41_21_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4c 2",
+    "sg_number": 93,
+    "extension": "",
+    "labels": "P_42_2_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4n 2n",
+    "sg_number": 94,
+    "extension": "",
+    "labels": "P_42_21_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4cw 2c",
+    "sg_number": 95,
+    "extension": "",
+    "labels": "P_43_2_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4nw 2abw",
+    "sg_number": 96,
+    "extension": "",
+    "labels": "P_43_21_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "I 4 2",
+    "sg_number": 97,
+    "extension": "",
+    "labels": "I_4_2_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I 4bw 2bw",
+    "sg_number": 98,
+    "extension": "",
+    "labels": "I_41_2_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P 4 -2",
+    "sg_number": 99,
+    "extension": "",
+    "labels": "P_4_m_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4 -2ab",
+    "sg_number": 100,
+    "extension": "",
+    "labels": "P_4_b_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4c -2c",
+    "sg_number": 101,
+    "extension": "",
+    "labels": "P_42_c_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4n -2n",
+    "sg_number": 102,
+    "extension": "",
+    "labels": "P_42_n_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4 -2c",
+    "sg_number": 103,
+    "extension": "",
+    "labels": "P_4_c_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4 -2n",
+    "sg_number": 104,
+    "extension": "",
+    "labels": "P_4_n_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4c -2",
+    "sg_number": 105,
+    "extension": "",
+    "labels": "P_42_m_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4c -2ab",
+    "sg_number": 106,
+    "extension": "",
+    "labels": "P_42_b_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "I 4 -2",
+    "sg_number": 107,
+    "extension": "",
+    "labels": "I_4_m_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I 4 -2c",
+    "sg_number": 108,
+    "extension": "",
+    "labels": "I_4_c_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I 4bw -2",
+    "sg_number": 109,
+    "extension": "",
+    "labels": "I_41_m_d",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I 4bw -2c",
+    "sg_number": 110,
+    "extension": "",
+    "labels": "I_41_c_d",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P -4 2",
+    "sg_number": 111,
+    "extension": "",
+    "labels": "P_-4_2_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -4 2c",
+    "sg_number": 112,
+    "extension": "",
+    "labels": "P_-4_2_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -4 2ab",
+    "sg_number": 113,
+    "extension": "",
+    "labels": "P_-4_21_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -4 2n",
+    "sg_number": 114,
+    "extension": "",
+    "labels": "P_-4_21_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -4 -2",
+    "sg_number": 115,
+    "extension": "",
+    "labels": "P_-4_m_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -4 -2c",
+    "sg_number": 116,
+    "extension": "",
+    "labels": "P_-4_c_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -4 -2ab",
+    "sg_number": 117,
+    "extension": "",
+    "labels": "P_-4_b_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -4 -2n",
+    "sg_number": 118,
+    "extension": "",
+    "labels": "P_-4_n_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "I -4 -2",
+    "sg_number": 119,
+    "extension": "",
+    "labels": "I_-4_m_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I -4 -2c",
+    "sg_number": 120,
+    "extension": "",
+    "labels": "I_-4_c_2",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I -4 2",
+    "sg_number": 121,
+    "extension": "",
+    "labels": "I_-4_2_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I -4 2bw",
+    "sg_number": 122,
+    "extension": "",
+    "labels": "I_-4_2_d",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-P 4 2",
+    "sg_number": 123,
+    "extension": "",
+    "labels": "P_4/m_m_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4 2c",
+    "sg_number": 124,
+    "extension": "",
+    "labels": "P_4/m_c_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4 2 -1ab",
+    "sg_number": 125,
+    "extension": "1",
+    "labels": "P_4/n_b_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4a 2b",
+    "sg_number": 125,
+    "extension": "2",
+    "labels": "P_4/n_b_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4 2 -1n",
+    "sg_number": 126,
+    "extension": "1",
+    "labels": "P_4/n_n_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4a 2bc",
+    "sg_number": 126,
+    "extension": "2",
+    "labels": "P_4/n_n_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4 2ab",
+    "sg_number": 127,
+    "extension": "",
+    "labels": "P_4/m_b_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4 2n",
+    "sg_number": 128,
+    "extension": "",
+    "labels": "P_4/m_n_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4ab 2ab -1ab",
+    "sg_number": 129,
+    "extension": "1",
+    "labels": "P_4/n_m_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4a 2a",
+    "sg_number": 129,
+    "extension": "2",
+    "labels": "P_4/n_m_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4ab 2n -1ab",
+    "sg_number": 130,
+    "extension": "1",
+    "labels": "P_4/n_c_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4a 2ac",
+    "sg_number": 130,
+    "extension": "2",
+    "labels": "P_4/n_c_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4c 2",
+    "sg_number": 131,
+    "extension": "",
+    "labels": "P_42/m_m_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4c 2c",
+    "sg_number": 132,
+    "extension": "",
+    "labels": "P_42/m_c_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4n 2c -1n",
+    "sg_number": 133,
+    "extension": "1",
+    "labels": "P_42/n_b_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4ac 2b",
+    "sg_number": 133,
+    "extension": "2",
+    "labels": "P_42/n_b_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4n 2 -1n",
+    "sg_number": 134,
+    "extension": "1",
+    "labels": "P_42/n_n_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4ac 2bc",
+    "sg_number": 134,
+    "extension": "2",
+    "labels": "P_42/n_n_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4c 2ab",
+    "sg_number": 135,
+    "extension": "",
+    "labels": "P_42/m_b_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4n 2n",
+    "sg_number": 136,
+    "extension": "",
+    "labels": "P_42/m_n_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4n 2n -1n",
+    "sg_number": 137,
+    "extension": "1",
+    "labels": "P_42/n_m_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4ac 2a",
+    "sg_number": 137,
+    "extension": "2",
+    "labels": "P_42/n_m_c",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4n 2ab -1n",
+    "sg_number": 138,
+    "extension": "1",
+    "labels": "P_42/n_c_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4ac 2ac",
+    "sg_number": 138,
+    "extension": "2",
+    "labels": "P_42/n_c_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-I 4 2",
+    "sg_number": 139,
+    "extension": "",
+    "labels": "I_4/m_m_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 4 2c",
+    "sg_number": 140,
+    "extension": "",
+    "labels": "I_4/m_c_m",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I 4bw 2bw -1bw",
+    "sg_number": 141,
+    "extension": "1",
+    "labels": "I_41/a_m_d",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 4bd 2",
+    "sg_number": 141,
+    "extension": "2",
+    "labels": "I_41/a_m_d",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "I 4bw 2aw -1bw",
+    "sg_number": 142,
+    "extension": "1",
+    "labels": "I_41/a_c_d",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 4bd 2c",
+    "sg_number": 142,
+    "extension": "2",
+    "labels": "I_41/a_c_d",
+    "crystal_system": "tetragonal",
+    "laue_class": "4/mmm",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P 3",
+    "sg_number": 143,
+    "extension": "",
+    "labels": "P_3",
+    "crystal_system": "trigonal",
+    "laue_class": "-3",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 31",
+    "sg_number": 144,
+    "extension": "",
+    "labels": "P_31",
+    "crystal_system": "trigonal",
+    "laue_class": "-3",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 32",
+    "sg_number": 145,
+    "extension": "",
+    "labels": "P_32",
+    "crystal_system": "trigonal",
+    "laue_class": "-3",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "R 3",
+    "sg_number": 146,
+    "extension": "H",
+    "labels": "R_3",
+    "crystal_system": "trigonal",
+    "laue_class": "-3",
+    "centering": "R"
+  },
+  {
+    "hall_symbol": "P 3*",
+    "sg_number": 146,
+    "extension": "R",
+    "labels": "R_3",
+    "crystal_system": "trigonal",
+    "laue_class": "-3",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 3",
+    "sg_number": 147,
+    "extension": "",
+    "labels": "P_-3",
+    "crystal_system": "trigonal",
+    "laue_class": "-3",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-R 3",
+    "sg_number": 148,
+    "extension": "H",
+    "labels": "R_-3",
+    "crystal_system": "trigonal",
+    "laue_class": "-3",
+    "centering": "R"
+  },
+  {
+    "hall_symbol": "-P 3*",
+    "sg_number": 148,
+    "extension": "R",
+    "labels": "R_-3",
+    "crystal_system": "trigonal",
+    "laue_class": "-3",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 3 2",
+    "sg_number": 149,
+    "extension": "",
+    "labels": "P_3_1_2",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 3 2\"",
+    "sg_number": 150,
+    "extension": "",
+    "labels": "P_3_2_1",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 31 2c (0 0 1)",
+    "sg_number": 151,
+    "extension": "",
+    "labels": "P_31_1_2",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 31 2\"",
+    "sg_number": 152,
+    "extension": "",
+    "labels": "P_31_2_1",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 32 2c (0 0 -1)",
+    "sg_number": 153,
+    "extension": "",
+    "labels": "P_32_1_2",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 32 2\"",
+    "sg_number": 154,
+    "extension": "",
+    "labels": "P_32_2_1",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "R 3 2\"",
+    "sg_number": 155,
+    "extension": "H",
+    "labels": "R_32",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "R"
+  },
+  {
+    "hall_symbol": "P 3* 2",
+    "sg_number": 155,
+    "extension": "R",
+    "labels": "R_32",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 3 -2\"",
+    "sg_number": 156,
+    "extension": "",
+    "labels": "P_3_m_1",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 3 -2",
+    "sg_number": 157,
+    "extension": "",
+    "labels": "P_3_1_m",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 3 -2\"c",
+    "sg_number": 158,
+    "extension": "",
+    "labels": "P_3_c_1",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 3 -2c",
+    "sg_number": 159,
+    "extension": "",
+    "labels": "P_3_1_c",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "R 3 -2\"",
+    "sg_number": 160,
+    "extension": "H",
+    "labels": "R_3_m",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "R"
+  },
+  {
+    "hall_symbol": "P 3* -2",
+    "sg_number": 160,
+    "extension": "R",
+    "labels": "R_3_m",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "R 3 -2\"c",
+    "sg_number": 161,
+    "extension": "H",
+    "labels": "R_3_c",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "R"
+  },
+  {
+    "hall_symbol": "P 3* -2n",
+    "sg_number": 161,
+    "extension": "R",
+    "labels": "R_3_c",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 3 2",
+    "sg_number": 162,
+    "extension": "",
+    "labels": "P_-3_1_m",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 3 2c",
+    "sg_number": 163,
+    "extension": "",
+    "labels": "P_-3_1_c",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 3 2\"",
+    "sg_number": 164,
+    "extension": "",
+    "labels": "P_-3_m_1",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 3 2\"c",
+    "sg_number": 165,
+    "extension": "",
+    "labels": "P_-3_c_1",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-R 3 2\"",
+    "sg_number": 166,
+    "extension": "H",
+    "labels": "R_-3_m",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "R"
+  },
+  {
+    "hall_symbol": "-P 3* 2",
+    "sg_number": 166,
+    "extension": "R",
+    "labels": "R_-3_m",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-R 3 2\"c",
+    "sg_number": 167,
+    "extension": "H",
+    "labels": "R_-3_c",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "R"
+  },
+  {
+    "hall_symbol": "-P 3* 2n",
+    "sg_number": 167,
+    "extension": "R",
+    "labels": "R_-3_c",
+    "crystal_system": "trigonal",
+    "laue_class": "-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 6",
+    "sg_number": 168,
+    "extension": "",
+    "labels": "P_6",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 61",
+    "sg_number": 169,
+    "extension": "",
+    "labels": "P_61",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 65",
+    "sg_number": 170,
+    "extension": "",
+    "labels": "P_65",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 62",
+    "sg_number": 171,
+    "extension": "",
+    "labels": "P_62",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 64",
+    "sg_number": 172,
+    "extension": "",
+    "labels": "P_64",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 6c",
+    "sg_number": 173,
+    "extension": "",
+    "labels": "P_63",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -6",
+    "sg_number": 174,
+    "extension": "",
+    "labels": "P_-6",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 6",
+    "sg_number": 175,
+    "extension": "",
+    "labels": "P_6/m",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 6c",
+    "sg_number": 176,
+    "extension": "",
+    "labels": "P_63/m",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 6 2",
+    "sg_number": 177,
+    "extension": "",
+    "labels": "P_6_2_2",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 61 2 (0 0 -1)",
+    "sg_number": 178,
+    "extension": "",
+    "labels": "P_61_2_2",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 65 2 (0 0 1)",
+    "sg_number": 179,
+    "extension": "",
+    "labels": "P_65_2_2",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 62 2c (0 0 1)",
+    "sg_number": 180,
+    "extension": "",
+    "labels": "P_62_2_2",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 64 2c (0 0 -1)",
+    "sg_number": 181,
+    "extension": "",
+    "labels": "P_64_2_2",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 6c 2c",
+    "sg_number": 182,
+    "extension": "",
+    "labels": "P_63_2_2",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 6 -2",
+    "sg_number": 183,
+    "extension": "",
+    "labels": "P_6_m_m",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 6 -2c",
+    "sg_number": 184,
+    "extension": "",
+    "labels": "P_6_c_c",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 6c -2",
+    "sg_number": 185,
+    "extension": "",
+    "labels": "P_63_c_m",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 6c -2c",
+    "sg_number": 186,
+    "extension": "",
+    "labels": "P_63_m_c",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -6 2",
+    "sg_number": 187,
+    "extension": "",
+    "labels": "P_-6_m_2",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -6c 2",
+    "sg_number": 188,
+    "extension": "",
+    "labels": "P_-6_c_2",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -6 -2",
+    "sg_number": 189,
+    "extension": "",
+    "labels": "P_-6_2_m",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P -6c -2c",
+    "sg_number": 190,
+    "extension": "",
+    "labels": "P_-6_2_c",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 6 2",
+    "sg_number": 191,
+    "extension": "",
+    "labels": "P_6/m_m_m",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 6 2c",
+    "sg_number": 192,
+    "extension": "",
+    "labels": "P_6/m_c_c",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 6c 2",
+    "sg_number": 193,
+    "extension": "",
+    "labels": "P_63/m_c_m",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 6c 2c",
+    "sg_number": 194,
+    "extension": "",
+    "labels": "P_63/m_m_c",
+    "crystal_system": "hexagonal",
+    "laue_class": "6/mmm",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 2 3",
+    "sg_number": 195,
+    "extension": "",
+    "labels": "P_2_3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "F 2 2 3",
+    "sg_number": 196,
+    "extension": "",
+    "labels": "F_2_3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "I 2 2 3",
+    "sg_number": 197,
+    "extension": "",
+    "labels": "I_2_3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P 2ac 2ab 3",
+    "sg_number": 198,
+    "extension": "",
+    "labels": "P_21_3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "I 2b 2c 3",
+    "sg_number": 199,
+    "extension": "",
+    "labels": "I_21_3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-P 2 2 3",
+    "sg_number": 200,
+    "extension": "",
+    "labels": "P_m_-3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 2 2 3 -1n",
+    "sg_number": 201,
+    "extension": "1",
+    "labels": "P_n_-3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 2ab 2bc 3",
+    "sg_number": 201,
+    "extension": "2",
+    "labels": "P_n_-3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-F 2 2 3",
+    "sg_number": 202,
+    "extension": "",
+    "labels": "F_m_-3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "F 2 2 3 -1d",
+    "sg_number": 203,
+    "extension": "1",
+    "labels": "F_d_-3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "-F 2uv 2vw 3",
+    "sg_number": 203,
+    "extension": "2",
+    "labels": "F_d_-3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "-I 2 2 3",
+    "sg_number": 204,
+    "extension": "",
+    "labels": "I_m_-3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-P 2ac 2ab 3",
+    "sg_number": 205,
+    "extension": "",
+    "labels": "P_a_-3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-I 2b 2c 3",
+    "sg_number": 206,
+    "extension": "",
+    "labels": "I_a_-3",
+    "crystal_system": "cubic",
+    "laue_class": "m-3",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P 4 2 3",
+    "sg_number": 207,
+    "extension": "",
+    "labels": "P_4_3_2",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4n 2 3",
+    "sg_number": 208,
+    "extension": "",
+    "labels": "P_42_3_2",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "F 4 2 3",
+    "sg_number": 209,
+    "extension": "",
+    "labels": "F_4_3_2",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "F 4d 2 3",
+    "sg_number": 210,
+    "extension": "",
+    "labels": "F_41_3_2",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "I 4 2 3",
+    "sg_number": 211,
+    "extension": "",
+    "labels": "I_4_3_2",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P 4acd 2ab 3",
+    "sg_number": 212,
+    "extension": "",
+    "labels": "P_43_3_2",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4bd 2ab 3",
+    "sg_number": 213,
+    "extension": "",
+    "labels": "P_41_3_2",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "I 4bd 2c 3",
+    "sg_number": 214,
+    "extension": "",
+    "labels": "I_41_3_2",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P -4 2 3",
+    "sg_number": 215,
+    "extension": "",
+    "labels": "P_-4_3_m",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "F -4 2 3",
+    "sg_number": 216,
+    "extension": "",
+    "labels": "F_-4_3_m",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "I -4 2 3",
+    "sg_number": 217,
+    "extension": "",
+    "labels": "I_-4_3_m",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "P -4n 2 3",
+    "sg_number": 218,
+    "extension": "",
+    "labels": "P_-4_3_n",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "F -4c 2 3",
+    "sg_number": 219,
+    "extension": "",
+    "labels": "F_-4_3_c",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "I -4bd 2c 3",
+    "sg_number": 220,
+    "extension": "",
+    "labels": "I_-4_3_d",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-P 4 2 3",
+    "sg_number": 221,
+    "extension": "",
+    "labels": "P_m_-3_m",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4 2 3 -1n",
+    "sg_number": 222,
+    "extension": "1",
+    "labels": "P_n_-3_n",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4a 2bc 3",
+    "sg_number": 222,
+    "extension": "2",
+    "labels": "P_n_-3_n",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4n 2 3",
+    "sg_number": 223,
+    "extension": "",
+    "labels": "P_m_-3_n",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "P 4n 2 3 -1n",
+    "sg_number": 224,
+    "extension": "1",
+    "labels": "P_n_-3_m",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-P 4bc 2bc 3",
+    "sg_number": 224,
+    "extension": "2",
+    "labels": "P_n_-3_m",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "P"
+  },
+  {
+    "hall_symbol": "-F 4 2 3",
+    "sg_number": 225,
+    "extension": "",
+    "labels": "F_m_-3_m",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "-F 4c 2 3",
+    "sg_number": 226,
+    "extension": "",
+    "labels": "F_m_-3_c",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "F 4d 2 3 -1d",
+    "sg_number": 227,
+    "extension": "1",
+    "labels": "F_d_-3_m",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "-F 4vw 2vw 3",
+    "sg_number": 227,
+    "extension": "2",
+    "labels": "F_d_-3_m",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "F 4d 2 3 -1cd",
+    "sg_number": 228,
+    "extension": "1",
+    "labels": "F_d_-3_c",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "-F 4cvw 2vw 3",
+    "sg_number": 228,
+    "extension": "2",
+    "labels": "F_d_-3_c",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "F"
+  },
+  {
+    "hall_symbol": "-I 4 2 3",
+    "sg_number": 229,
+    "extension": "",
+    "labels": "I_m_-3_m",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "I"
+  },
+  {
+    "hall_symbol": "-I 4bd 2c 3",
+    "sg_number": 230,
+    "extension": "",
+    "labels": "I_a_-3_d",
+    "crystal_system": "cubic",
+    "laue_class": "m-3m",
+    "centering": "I"
+  }
+]

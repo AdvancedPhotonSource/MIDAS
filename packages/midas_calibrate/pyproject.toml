@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midas-calibrate"
+version = "0.1.0"
+description = "Native Python/Torch detector calibration for MIDAS — replaces AutoCalibrateZarr → CalibrantIntegratorOMP. CPU & GPU; LM-based refinement."
+readme = "README.md"
+license = { text = "BSD-3-Clause" }
+authors = [{ name = "MIDAS contributors" }]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.22",
+    "scipy>=1.9",
+    "torch>=2.1",
+    "midas-hkls>=0.1.0",
+    "midas-integrate>=0.1.0",
+    "midas-peakfit>=0.2.0",
+    "h5py>=3.0",
+    "tifffile>=2022.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pandas>=1.5"]
+plots = ["matplotlib>=3.5"]
+
+[project.scripts]
+midas-calibrate = "midas_calibrate.cli:main"
+midas-autocalibrate = "midas_calibrate.cli:autocalibrate_main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["midas_calibrate*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"

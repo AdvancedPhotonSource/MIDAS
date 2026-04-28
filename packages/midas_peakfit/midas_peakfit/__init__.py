@@ -10,8 +10,25 @@ Entry points:
     midas_peakfit.run(...)    — programmatic; see ``midas_peakfit.pipeline_main``
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
+from midas_peakfit.lm import LMConfig, lm_solve  # noqa: E402,F401
+from midas_peakfit.lm_generic import (  # noqa: E402,F401
+    GenericLMConfig,
+    lm_solve_arrowhead,
+    lm_solve_generic,
+)
 from midas_peakfit.params import ZarrParams  # noqa: E402,F401
+from midas_peakfit.reparam import u_to_x, x_to_u  # noqa: E402,F401
 
-__all__ = ["__version__", "ZarrParams"]
+__all__ = [
+    "GenericLMConfig",
+    "LMConfig",
+    "ZarrParams",
+    "__version__",
+    "lm_solve",
+    "lm_solve_arrowhead",
+    "lm_solve_generic",
+    "u_to_x",
+    "x_to_u",
+]

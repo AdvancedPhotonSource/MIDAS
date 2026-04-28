@@ -2984,8 +2984,34 @@ def main():
                             help='Output parameter filename (default: refined_MIDAS_params_<stem>.txt)')
         parser.add_argument('--no-validate', action='store_true',
                             help='Skip post-calibration integrator validation')
+        parser.add_argument('--engine', choices=['c', 'python'], default='c',
+                            help='Calibration engine: "c" (default; existing CalibrantIntegratorOMP path) or '
+                                 '"python" (native midas-calibrate; alternating LM-based, fp32/fp64).')
 
         args = parser.parse_args()
+
+        # ---- Python engine routing -------------------------------------
+        if args.engine == 'python':
+            try:
+                from midas_calibrate.cli import autocalibrate_main as _py_main
+            except ImportError as exc:
+                raise SystemExit(
+                    f"--engine python requires the midas-calibrate package: {exc}"
+                )
+            _py_argv = []
+            if args.params:
+                _py_argv.append(args.params)
+            else:
+                raise SystemExit("--engine python currently requires --params (a MIDAS parameter file)")
+            _py_argv += ["--image", args.data]
+            if args.dark:
+                _py_argv += ["--dark", args.dark]
+            if args.output:
+                _py_argv += ["--output", args.output]
+            if args.n_iterations:
+                _py_argv += ["--n-iters", str(args.n_iterations)]
+            return _py_main(_py_argv)
+        # ---- (otherwise fall through to the existing C path) ----------
 
         # ---- Initialize state ----
         state = CalibState()
