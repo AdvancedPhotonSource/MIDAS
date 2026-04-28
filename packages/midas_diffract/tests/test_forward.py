@@ -871,9 +871,31 @@ class TestPredictImages:
         )
         assert images.shape == (100, 64, 64)
 
-    def test_nonzero_output(self, nf_geometry, device):
-        """At least some pixels should be nonzero if there are valid spots."""
-        model, _, _ = make_model_with_cubic_iron(nf_geometry, device)
+    def test_nonzero_output(self, device):
+        """At least some pixels should be nonzero if there are valid spots.
+
+        Uses a small in-test geometry (256×256, 60 frames) instead of the
+        2048×2048 / 1440-frame nf_geometry fixture: the full grid would
+        allocate ~24 GB (n_batch × n_frames × NY × NZ × 4 bytes) which OOMs
+        7 GB CI runners.  This test only checks ``images.sum() > 0``, so the
+        actual detector size is irrelevant — we just need a geometry whose
+        spots land on the (smaller) grid.
+        """
+        small_geometry = HEDMGeometry(
+            Lsd=5105.669354,
+            y_BC=128.0,
+            z_BC=128.0,
+            px=1.48,
+            omega_start=180.0,
+            omega_step=-6.0,        # 60 frames cover the same 360° range
+            n_frames=60,
+            n_pixels_y=256,
+            n_pixels_z=256,
+            min_eta=6.0,
+            wavelength=0.295,
+            flip_y=False,
+        )
+        model, _, _ = make_model_with_cubic_iron(small_geometry, device)
         euler = torch.rand(1, 3) * 0.1
         pos = torch.zeros(1, 3)
         spots = model(euler, pos)
