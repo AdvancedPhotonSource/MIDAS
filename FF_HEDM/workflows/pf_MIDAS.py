@@ -157,7 +157,8 @@ def parallel_peaks(layerNr, positions, startNrFirstLayer, nrFilesPerSweep, topdi
                   paramContents, baseNameParamFN, ConvertFiles, nchunks, preproc,
                   midas_path, doPeakSearch, numProcs, startNr, endNr, Lsd, NormalizeIntensities,
                   omegaValues, minThresh, fStem, omegaFF, Ext, padding=6, scanStep=None,
-                  runSR=0, srfac=8, SRconfig_path='auto', saveSRpatches=0, saveFrameGoodCoords=0):
+                  runSR=0, srfac=8, SRconfig_path='auto', saveSRpatches=0, saveFrameGoodCoords=0,
+                  peakFitGPU=0):
     """
     Run peak search in parallel for a specific layer.
     
@@ -370,12 +371,17 @@ def parallel_peaks(layerNr, positions, startNrFirstLayer, nrFilesPerSweep, topdi
             if doPeakSearch == 1 and runSR != 1:
                 t_st = time.time()
                 logger.info(f'Starting PeakSearch for layer {layerNr}')
-                cmd = f"{os.path.join(midas_path, 'FF_HEDM/bin/PeaksFittingOMPZarrRefactor')} {outFStem} 0 1 {numProcs} {thisDir}"
+                _backend = 'torch' if int(peakFitGPU) == 1 else 'c'
+                if _backend == 'torch':
+                    cmd = f"peakfit_torch {outFStem} 0 1 {numProcs} {thisDir}"
+                else:
+                    cmd = f"{os.path.join(midas_path, 'FF_HEDM/bin/PeaksFittingOMPZarrRefactor')} {outFStem} 0 1 {numProcs} {thisDir}"
+                logger.info(f"PeakSearch command (backend={_backend}): {cmd}")
                 subprocess.call(cmd, shell=True, stdout=f, stderr=f_err)
 
                 if check_error_file(f_err_path):
                     with open(f_err_path, 'r') as ef:
-                        logger.error(f"Error in PeaksFittingOMPZarrRefactor: {ef.read()}")
+                        logger.error(f"Error in peak-fitting (backend={_backend}): {ef.read()}")
                     return f"Failed at PeakSearch for layer {layerNr}"
 
                 logger.info(f'PeakSearch Done for layer {layerNr}. Time taken: {time.time() - t_st} seconds.')
@@ -583,7 +589,7 @@ def parallel_peaks(layerNr, positions, startNrFirstLayer, nrFilesPerSweep, topdi
         return f"Failed with exception for layer {layerNr}: {str(e)}"
 
 @python_app
-def peaks(resultDir, zipFN, numProcs, midas_path, blockNr=0, numBlocks=1):
+def peaks(resultDir, zipFN, numProcs, midas_path, blockNr=0, numBlocks=1, peakFitGPU=0):
     """
     Run peak search on a specific block. Not used now!
     
@@ -641,9 +647,13 @@ def peaks(resultDir, zipFN, numProcs, midas_path, blockNr=0, numBlocks=1):
             # Log initialization to error file to distinguish from real errors
             f_err.write("I was able to do something.\n")
             
-            # Build command
-            cmd_this = f"{os.path.join(midas_path, 'FF_HEDM/bin/PeaksFittingOMPZarrRefactor')} {zipFN} {blockNr} {numBlocks} {numProcs} {resultDir}"
-            logger.info(f"Running PeaksFittingOMPZarrRefactor: {cmd_this}")
+            # Build command (peakFitGPU=1 selects the GPU/PyTorch backend)
+            _backend = 'torch' if int(peakFitGPU) == 1 else 'c'
+            if _backend == 'torch':
+                cmd_this = f"peakfit_torch {zipFN} {blockNr} {numBlocks} {numProcs} {resultDir}"
+            else:
+                cmd_this = f"{os.path.join(midas_path, 'FF_HEDM/bin/PeaksFittingOMPZarrRefactor')} {zipFN} {blockNr} {numBlocks} {numProcs} {resultDir}"
+            logger.info(f"Running peak-fitting (backend={_backend}): {cmd_this}")
             f_err.write(f"{cmd_this}\n")
             
             # Run command
@@ -998,6 +1008,9 @@ def main():
     parser.add_argument('-preProcThresh', type=int, required=False, default=-1, help='If want to save the dark corrected data, then put to whatever threshold wanted above dark. -1 will disable. 0 will just subtract dark. Negative values will be reset to 0.')
     parser.add_argument('-doTomo', type=int, required=False, default=1, help='If want to do tomography, put to 1. Only for OneSolPerVox.')
     parser.add_argument('-useGPU', type=int, required=False, default=0, help='Use GPU binaries (IndexerScanningGPU, FitOrStrainsScanningGPU) instead of OMP versions. Default: 0')
+    parser.add_argument('-peakFitGPU', type=int, required=False, default=0,
+                        help='Use GPU/PyTorch peak fitter (peakfit_torch from midas-peakfit) instead of '
+                             'the OMP C tool PeaksFittingOMPZarrRefactor. Default: 0 (use C tool).')
     parser.add_argument('-normalizeIntensities', type=int, required=False, default=2, help='Normalization mode for intensity in sinograms: 0=equivalent grain size, 1=powder-scaled, 2=integrated intensity (default), 3=raw sum intensity from PeaksFitting.')
     parser.add_argument('-convertFiles', type=int, required=False, default=1, help='If want to convert to zarr, if zarr files exist already, put to 0.')
     parser.add_argument('-runIndexing', type=int, required=False, default=1, help='If want to skip Indexing, put to 0.')
@@ -1418,6 +1431,7 @@ def main():
                         omegaValues, minThresh, fStem, omegaFF, Ext, padding, scanStep,
                         runSR=runSR, srfac=srfac, SRconfig_path=SRconfig_path,
                         saveSRpatches=saveSRpatches, saveFrameGoodCoords=saveFrameGoodCoords,
+                        peakFitGPU=args.peakFitGPU,
                     ))
                 
                 # Wait for all tasks to complete

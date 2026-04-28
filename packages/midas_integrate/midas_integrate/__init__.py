@@ -1,0 +1,124 @@
+"""midas-integrate — pure-Python radial integration for area X-ray detectors.
+
+Public API surface (re-exports from submodules so users can do
+`from midas_integrate import build_csr` etc.).
+"""
+from __future__ import annotations
+
+__version__ = "0.1.0"
+
+from midas_integrate.bin_io import (
+    PXLIST_DTYPE,
+    MAP_HEADER_MAGIC,
+    MAP_HEADER_SIZE,
+    MapHeader,
+    PixelMap,
+    load_map,
+    write_map,
+    write_synthetic_map,
+)
+from midas_integrate.params import IntegrationParams, parse_params
+from midas_integrate.geometry import (
+    DEG2RAD,
+    RAD2DEG,
+    build_tilt_matrix,
+    pixel_to_REta,
+    REta_to_YZ,
+    build_bin_edges,
+    build_q_bin_edges_in_R,
+    polygon_area,
+    circle_seg_intersect,
+    ray_seg_intersect,
+    point_in_quad,
+    invert_REta_to_pixel,
+)
+from midas_integrate.detector_mapper import build_map, BuildMapResult
+from midas_integrate.kernels import (
+    AREA_THRESHOLD,
+    CSRGeometry,
+    build_csr,
+    integrate,
+    profile_1d,
+)
+from midas_integrate.image import (
+    bytes_per_pixel,
+    decode_payload,
+    decode_hybrid_payload,
+    NUMPY_DTYPE_FOR_CODE,
+    DTYPE_CODE_UINT8,
+    DTYPE_CODE_UINT16,
+    DTYPE_CODE_UINT32,
+    DTYPE_CODE_INT64,
+    DTYPE_CODE_FLOAT32,
+    DTYPE_CODE_FLOAT64,
+    DTYPE_CODE_HYBRID,
+)
+from midas_integrate.peakfit import (
+    fit_peaks,
+    fit_peaks_autodetect,
+    pseudo_voigt,
+    snip_background,
+    PF_PARAMS_PER_PEAK,
+)
+from midas_integrate.fused_csr import build_fused_geometry
+from midas_integrate.postprocess import gauss_smooth_eta, median_filter_eta
+
+__all__ = [
+    "__version__",
+    # bin_io
+    "PXLIST_DTYPE",
+    "MAP_HEADER_MAGIC",
+    "MAP_HEADER_SIZE",
+    "MapHeader",
+    "PixelMap",
+    "load_map",
+    "write_map",
+    "write_synthetic_map",
+    # params
+    "IntegrationParams",
+    "parse_params",
+    # geometry
+    "DEG2RAD",
+    "RAD2DEG",
+    "build_tilt_matrix",
+    "pixel_to_REta",
+    "REta_to_YZ",
+    "build_bin_edges",
+    "build_q_bin_edges_in_R",
+    "polygon_area",
+    "circle_seg_intersect",
+    "ray_seg_intersect",
+    "point_in_quad",
+    "invert_REta_to_pixel",
+    # detector_mapper
+    "build_map",
+    "BuildMapResult",
+    # kernels
+    "AREA_THRESHOLD",
+    "CSRGeometry",
+    "build_csr",
+    "integrate",
+    "profile_1d",
+    # image
+    "bytes_per_pixel",
+    "decode_payload",
+    "decode_hybrid_payload",
+    "NUMPY_DTYPE_FOR_CODE",
+    "DTYPE_CODE_UINT8",
+    "DTYPE_CODE_UINT16",
+    "DTYPE_CODE_UINT32",
+    "DTYPE_CODE_INT64",
+    "DTYPE_CODE_FLOAT32",
+    "DTYPE_CODE_FLOAT64",
+    "DTYPE_CODE_HYBRID",
+    # peakfit
+    "fit_peaks",
+    "fit_peaks_autodetect",
+    "pseudo_voigt",
+    "snip_background",
+    "PF_PARAMS_PER_PEAK",
+    # alias-mitigation API (Family II + III)
+    "build_fused_geometry",
+    "gauss_smooth_eta",
+    "median_filter_eta",
+]

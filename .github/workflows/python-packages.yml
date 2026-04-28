@@ -25,6 +25,8 @@ jobs:
         package:
           - midas_stress
           - midas_params
+          - midas_peakfit
+          - midas_integrate
 
     steps:
       - uses: actions/checkout@v4
@@ -44,8 +46,10 @@ jobs:
 
   # ─── Build + publish: triggered by GitHub release only ────────────────────
   # The tag name selects which package to publish:
-  #   midas-stress-v*  → midas_stress
-  #   midas-params-v*  → midas_params
+  #   midas-stress-v*     → midas_stress
+  #   midas-params-v*     → midas_params
+  #   midas-peakfit-v*    → midas_peakfit
+  #   midas-integrate-v*  → midas_integrate
   #
   # Release tags without one of these prefixes are ignored (no-op build).
   build:
@@ -69,6 +73,12 @@ jobs:
           elif [[ "$TAG" == midas-params-v* ]]; then
             echo "package=midas_params" >> "$GITHUB_OUTPUT"
             echo "pypi_name=midas-params" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == midas-peakfit-v* ]]; then
+            echo "package=midas_peakfit" >> "$GITHUB_OUTPUT"
+            echo "pypi_name=midas-peakfit" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == midas-integrate-v* ]]; then
+            echo "package=midas_integrate" >> "$GITHUB_OUTPUT"
+            echo "pypi_name=midas-integrate" >> "$GITHUB_OUTPUT"
           else
             echo "Tag $TAG does not match any known package prefix; skipping."
             echo "package=" >> "$GITHUB_OUTPUT"

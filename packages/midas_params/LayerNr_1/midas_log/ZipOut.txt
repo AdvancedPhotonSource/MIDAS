@@ -1,2 +1,0 @@
-MIDAS v11.0 (133bf137) [modified]
-Info: 'SkipFrame' not found in parameter file. Defaulting to 0.

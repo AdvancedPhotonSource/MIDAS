@@ -1,0 +1,555 @@
+"""Detector geometry primitives.
+
+Pure-Python (numpy) port of FF_HEDM/src/DetectorGeometry.c.
+
+Functions are written in two flavors where it matters:
+
+- Scalar: used by ``detector_mapper.build_map`` inside a per-pixel loop.
+  These mirror the C function signatures one-for-one.
+- Vectorized: used wherever a whole detector or a large array of pixels can
+  be processed at once (e.g. the initial pass to compute (R, Eta) for every
+  pixel). These accept numpy arrays and broadcast.
+
+The tilt + 15-parameter distortion model is the canonical MIDAS forward
+transform. Q-mode binning is supported via ``build_q_bin_edges_in_R``.
+"""
+from __future__ import annotations
+
+import math
+from typing import List, Optional, Sequence, Tuple
+
+import numpy as np
+
+DEG2RAD = math.pi / 180.0
+RAD2DEG = 180.0 / math.pi
+EPS = 1e-6
+
+# Pixel corner offsets (matches DG_PosMatrix)
+QUAD_ORDER = (0, 1, 3, 2)
+PIXEL_CORNER_OFFSETS = np.array(
+    [[-0.5, -0.5], [-0.5, 0.5], [0.5, 0.5], [0.5, -0.5]],
+    dtype=np.float64,
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Small helpers
+# ─────────────────────────────────────────────────────────────────────────────
+def calc_eta_angle(y: float, z: float) -> float:
+    """Mirror dg_calc_eta_angle: atan2(-y, z) in degrees."""
+    return RAD2DEG * math.atan2(-y, z)
+
+
+def calc_eta_angle_array(y: np.ndarray, z: np.ndarray) -> np.ndarray:
+    return RAD2DEG * np.arctan2(-y, z)
+
+
+def _sign(x: float) -> float:
+    return 1.0 if x > 0 else (-1.0 if x < 0 else 0.0)
+
+
+def between(val: float, lo: float, hi: float) -> bool:
+    return (val - EPS <= hi) and (val + EPS >= lo)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tilt rotation
+# ─────────────────────────────────────────────────────────────────────────────
+def build_tilt_matrix(tx_deg: float, ty_deg: float, tz_deg: float) -> np.ndarray:
+    """TRs = Rx(tx) · Ry(ty) · Rz(tz) — angles in degrees, returns 3x3 float64."""
+    tx, ty, tz = (DEG2RAD * a for a in (tx_deg, ty_deg, tz_deg))
+    Rx = np.array([
+        [1, 0,           0          ],
+        [0, math.cos(tx), -math.sin(tx)],
+        [0, math.sin(tx),  math.cos(tx)],
+    ], dtype=np.float64)
+    Ry = np.array([
+        [ math.cos(ty), 0, math.sin(ty)],
+        [ 0,            1, 0           ],
+        [-math.sin(ty), 0, math.cos(ty)],
+    ], dtype=np.float64)
+    Rz = np.array([
+        [math.cos(tz), -math.sin(tz), 0],
+        [math.sin(tz),  math.cos(tz), 0],
+        [0,             0,            1],
+    ], dtype=np.float64)
+    return Rx @ (Ry @ Rz)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Forward transform: (Y, Z) pixel → (R [px], Eta [deg])
+# ─────────────────────────────────────────────────────────────────────────────
+def pixel_to_REta(
+    Y, Z,
+    *,
+    Ycen: float, Zcen: float,
+    TRs: np.ndarray,
+    Lsd: float, RhoD: float, px: float,
+    p0: float = 0.0, p1: float = 0.0, p2: float = 0.0, p3: float = 0.0,
+    p4: float = 0.0, p5: float = 0.0, p6: float = 0.0, p7: float = 0.0,
+    p8: float = 0.0, p9: float = 0.0, p10: float = 0.0, p11: float = 0.0,
+    p12: float = 0.0, p13: float = 0.0, p14: float = 0.0,
+    dLsd: float = 0.0, dP2: float = 0.0,
+    parallax: float = 0.0,
+    residual_corr_map: Optional[np.ndarray] = None,
+    return_untilted: bool = False,
+):
+    """Vectorized forward transform from pixel coords to (R_pixels, Eta_deg).
+
+    ``Y`` and ``Z`` may be scalars or numpy arrays — broadcasting applies.
+    Mirrors ``dg_pixel_to_REta_corr`` in C ``DetectorGeometry.c`` including
+    per-panel ``dLsd / dP2`` corrections and an optional residual ΔR(Y, Z)
+    bilinear-interpolation lookup.
+    """
+    Y = np.asarray(Y, dtype=np.float64)
+    Z = np.asarray(Z, dtype=np.float64)
+    panelLsd = Lsd + dLsd
+    panelP2 = p2 + dP2
+    Yc = (-Y + Ycen) * px
+    Zc = ( Z - Zcen) * px
+    # ABC = (0, Yc, Zc); apply TRs
+    abcpr_x = TRs[0, 1] * Yc + TRs[0, 2] * Zc
+    abcpr_y = TRs[1, 1] * Yc + TRs[1, 2] * Zc
+    abcpr_z = TRs[2, 1] * Yc + TRs[2, 2] * Zc
+    EtaUntilted = RAD2DEG * np.arctan2(-Yc, Zc) if return_untilted else None
+    XYZ_x = panelLsd + abcpr_x
+    XYZ_y = abcpr_y
+    XYZ_z = abcpr_z
+    # Avoid div-by-zero (XYZ_x ~ 0 means pixel is at the sample plane)
+    safe_x = np.where(np.abs(XYZ_x) < 1e-30, 1e-30, XYZ_x)
+    Rad = (panelLsd / safe_x) * np.sqrt(XYZ_y * XYZ_y + XYZ_z * XYZ_z)
+    EtaTilted = RAD2DEG * np.arctan2(-XYZ_y, XYZ_z)
+    RNorm = Rad / RhoD if RhoD > 0 else np.zeros_like(Rad)
+    EtaT = 90.0 - EtaTilted
+    EtaT_rad = DEG2RAD * EtaT
+    # 15-param distortion (uses panelP2 = p2 + dP2)
+    dist = (
+        p0 * np.power(RNorm, 2.0) * np.cos(2 * EtaT_rad + DEG2RAD * p6)
+        + p1 * np.power(RNorm, 4.0) * np.cos(4 * EtaT_rad + DEG2RAD * p3)
+        + panelP2 * np.power(RNorm, 2.0)
+        + p4 * np.power(RNorm, 6.0)
+        + p5 * np.power(RNorm, 4.0)
+        + p7 * np.power(RNorm, 4.0) * np.cos(EtaT_rad + DEG2RAD * p8)
+        + p9 * np.power(RNorm, 3.0) * np.cos(3 * EtaT_rad + DEG2RAD * p10)
+        + p11 * np.power(RNorm, 5.0) * np.cos(5 * EtaT_rad + DEG2RAD * p12)
+        + p13 * np.power(RNorm, 6.0) * np.cos(6 * EtaT_rad + DEG2RAD * p14)
+        + 1.0
+    )
+    Rt = Rad * dist / px      # in pixels (still on panel-local Lsd plane)
+    # Re-project to global Lsd plane so radii from different panels share a
+    # common scale (matches `Rt = Rt * (Lsd / panelLsd)` in the C version).
+    if dLsd != 0.0:
+        Rt = Rt * (Lsd / panelLsd)
+    if parallax != 0.0:
+        twoTheta = np.arctan(Rad / panelLsd)
+        Rt = Rt + parallax * np.sin(twoTheta) / px
+    if residual_corr_map is not None and residual_corr_map.size > 0:
+        Rt = Rt + _residual_corr_lookup_array(residual_corr_map, Y, Z)
+    if return_untilted:
+        return Rt, EtaTilted, EtaUntilted
+    return Rt, EtaTilted
+
+
+def _residual_corr_lookup_array(map_arr: np.ndarray,
+                                Y: np.ndarray, Z: np.ndarray) -> np.ndarray:
+    """Vectorized bilinear sample of ΔR(Y, Z); mirrors dg_residual_corr_lookup."""
+    NZ, NY = map_arr.shape
+    if NY == 0 or NZ == 0:
+        return np.zeros_like(np.broadcast_to(Y, np.broadcast(Y, Z).shape),
+                             dtype=np.float64)
+    y = np.clip(np.asarray(Y, dtype=np.float64), 0.0, NY - 1.001)
+    z = np.clip(np.asarray(Z, dtype=np.float64), 0.0, NZ - 1.001)
+    y0 = y.astype(np.int64)
+    z0 = z.astype(np.int64)
+    fy = y - y0
+    fz = z - z0
+    v00 = map_arr[z0,     y0]
+    v10 = map_arr[z0,     y0 + 1]
+    v01 = map_arr[z0 + 1, y0]
+    v11 = map_arr[z0 + 1, y0 + 1]
+    return (v00 * (1 - fy) * (1 - fz)
+            + v10 * fy       * (1 - fz)
+            + v01 * (1 - fy) * fz
+            + v11 * fy       * fz)
+
+
+def REta_to_YZ(R, Eta_deg):
+    """Inverse polar: (R, Eta_deg) → (Y, Z) centered at beam (vectorized)."""
+    Eta_rad = np.asarray(Eta_deg) * DEG2RAD
+    Y = -R * np.sin(Eta_rad)
+    Z = R * np.cos(Eta_rad)
+    return Y, Z
+
+
+def REta_to_YZ_scalar(R: float, Eta_deg: float) -> Tuple[float, float]:
+    """Scalar variant for inner loops."""
+    e = Eta_deg * DEG2RAD
+    return -R * math.sin(e), R * math.cos(e)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Newton-Raphson inversion
+# ─────────────────────────────────────────────────────────────────────────────
+def invert_REta_to_pixel(
+    R_target: float, Eta_target: float, *,
+    Ycen: float, Zcen: float,
+    TRs: np.ndarray, Lsd: float, RhoD: float, px: float,
+    p0: float = 0.0, p1: float = 0.0, p2: float = 0.0, p3: float = 0.0,
+    p4: float = 0.0, p5: float = 0.0, p6: float = 0.0, p7: float = 0.0,
+    p8: float = 0.0, p9: float = 0.0, p10: float = 0.0, p11: float = 0.0,
+    p12: float = 0.0, p13: float = 0.0, p14: float = 0.0,
+    parallax: float = 0.0,
+    max_iter: int = 10,
+    tol_R: float = 1e-8,
+    tol_eta: float = 1e-8,
+) -> Tuple[float, float]:
+    """Newton-Raphson inversion: find raw (Y, Z) such that the forward
+    transform reproduces ``(R_target, Eta_target)``.
+
+    Mirror of dg_invert_REta_to_pixel_corr in DetectorGeometry.c.
+    """
+    Y = Ycen + R_target * math.sin(Eta_target * DEG2RAD)
+    Z = Zcen + R_target * math.cos(Eta_target * DEG2RAD)
+    h = 0.01
+    for _ in range(max_iter):
+        R_eval, Eta_eval = pixel_to_REta(
+            Y, Z,
+            Ycen=Ycen, Zcen=Zcen, TRs=TRs, Lsd=Lsd, RhoD=RhoD, px=px,
+            p0=p0, p1=p1, p2=p2, p3=p3, p4=p4, p5=p5, p6=p6, p7=p7,
+            p8=p8, p9=p9, p10=p10, p11=p11, p12=p12, p13=p13, p14=p14,
+            parallax=parallax,
+        )
+        dR = R_target - float(R_eval)
+        dEta = Eta_target - float(Eta_eval)
+        if dEta > 180.0:
+            dEta -= 360.0
+        if dEta < -180.0:
+            dEta += 360.0
+        if abs(dR) < tol_R and abs(dEta) < tol_eta:
+            break
+        # Numerical Jacobian
+        R_dY, Eta_dY = pixel_to_REta(
+            Y + h, Z,
+            Ycen=Ycen, Zcen=Zcen, TRs=TRs, Lsd=Lsd, RhoD=RhoD, px=px,
+            p0=p0, p1=p1, p2=p2, p3=p3, p4=p4, p5=p5, p6=p6, p7=p7,
+            p8=p8, p9=p9, p10=p10, p11=p11, p12=p12, p13=p13, p14=p14,
+            parallax=parallax,
+        )
+        R_dZ, Eta_dZ = pixel_to_REta(
+            Y, Z + h,
+            Ycen=Ycen, Zcen=Zcen, TRs=TRs, Lsd=Lsd, RhoD=RhoD, px=px,
+            p0=p0, p1=p1, p2=p2, p3=p3, p4=p4, p5=p5, p6=p6, p7=p7,
+            p8=p8, p9=p9, p10=p10, p11=p11, p12=p12, p13=p13, p14=p14,
+            parallax=parallax,
+        )
+        dRdY = (float(R_dY) - float(R_eval)) / h
+        dRdZ = (float(R_dZ) - float(R_eval)) / h
+        dEdY = (float(Eta_dY) - float(Eta_eval)) / h
+        dEdZ = (float(Eta_dZ) - float(Eta_eval)) / h
+        det = dRdY * dEdZ - dRdZ * dEdY
+        if abs(det) < 1e-30:
+            break
+        deltaY = (dEdZ * dR - dRdZ * dEta) / det
+        deltaZ = (dRdY * dEta - dEdY * dR) / det
+        Y += deltaY
+        Z += deltaZ
+    return Y, Z
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bin edges
+# ─────────────────────────────────────────────────────────────────────────────
+def build_bin_edges(
+    RMin: float, EtaMin: float,
+    n_r_bins: int, n_eta_bins: int,
+    RBinSize: float, EtaBinSize: float,
+):
+    """Uniform R and Eta bin edges in numpy arrays."""
+    eta_lo = EtaMin + EtaBinSize * np.arange(n_eta_bins, dtype=np.float64)
+    eta_hi = eta_lo + EtaBinSize
+    r_lo = RMin + RBinSize * np.arange(n_r_bins, dtype=np.float64)
+    r_hi = r_lo + RBinSize
+    return r_lo, r_hi, eta_lo, eta_hi
+
+
+def build_q_bin_edges_in_R(
+    QMin: float, QMax: float, QBinSize: float,
+    Lsd: float, px: float, wavelength_A: float,
+):
+    """Compute non-uniform R bin edges that correspond to a uniform Q grid.
+
+    Uses the Bragg formula::
+
+        Q = (4π / λ) sin(θ),    R = (Lsd / px) tan(2θ)
+
+    Returns (r_lo, r_hi) in pixel units, plus the matching n_r_bins.
+    """
+    n_r = int(math.ceil((QMax - QMin) / QBinSize))
+    q_lo = QMin + QBinSize * np.arange(n_r, dtype=np.float64)
+    q_hi = q_lo + QBinSize
+    # 2θ = 2 arcsin(Qλ / 4π)
+    two_theta_lo = 2.0 * np.arcsin(np.clip(q_lo * wavelength_A / (4.0 * math.pi), -1, 1))
+    two_theta_hi = 2.0 * np.arcsin(np.clip(q_hi * wavelength_A / (4.0 * math.pi), -1, 1))
+    r_lo = (Lsd / px) * np.tan(two_theta_lo)
+    r_hi = (Lsd / px) * np.tan(two_theta_hi)
+    return r_lo, r_hi, n_r
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Polygon-arc intersection geometry (Green's theorem)
+# ─────────────────────────────────────────────────────────────────────────────
+def circle_seg_intersect(y1: float, z1: float,
+                         y2: float, z2: float,
+                         R: float) -> List[Tuple[float, float]]:
+    """Intersections of circle y²+z² = R² with segment P1→P2.
+
+    Returns 0, 1, or 2 (y, z) points clipped to segment endpoints.
+    """
+    dy = y2 - y1
+    dz = z2 - z1
+    a = dy * dy + dz * dz
+    if a < 1e-30:
+        return []
+    b = 2.0 * (y1 * dy + z1 * dz)
+    c = y1 * y1 + z1 * z1 - R * R
+    disc = b * b - 4.0 * a * c
+    if disc < 0:
+        return []
+    sqrt_disc = math.sqrt(disc)
+    inv2a = 0.5 / a
+    out: List[Tuple[float, float]] = []
+    t1 = (-b - sqrt_disc) * inv2a
+    if -EPS <= t1 <= 1.0 + EPS:
+        tc = max(0.0, min(1.0, t1))
+        out.append((y1 + tc * dy, z1 + tc * dz))
+    t2 = (-b + sqrt_disc) * inv2a
+    if -EPS <= t2 <= 1.0 + EPS and abs(t2 - t1) > 1e-12:
+        tc = max(0.0, min(1.0, t2))
+        out.append((y1 + tc * dy, z1 + tc * dz))
+    return out
+
+
+def ray_seg_intersect(y1: float, z1: float,
+                      y2: float, z2: float,
+                      eta_deg: float) -> Optional[Tuple[float, float]]:
+    """Intersection of an η-ray from origin with segment P1→P2.
+
+    Returns (y, z) or None. Only points on the *positive* ray direction count.
+    """
+    eta_rad = eta_deg * DEG2RAD
+    ce = math.cos(eta_rad)
+    se = math.sin(eta_rad)
+    dy = y2 - y1
+    dz = z2 - z1
+    denom = dy * ce + dz * se
+    if abs(denom) < 1e-30:
+        return None
+    t = -(y1 * ce + z1 * se) / denom
+    if t < -EPS or t > 1.0 + EPS:
+        return None
+    t = max(0.0, min(1.0, t))
+    hy = y1 + t * dy
+    hz = z1 + t * dz
+    if (-se) * hy + ce * hz < 0:
+        return None
+    return (hy, hz)
+
+
+def point_in_quad(py: float, pz: float, quad: np.ndarray) -> bool:
+    """Convex point-in-quadrilateral test (matches dg_point_in_quad).
+
+    quad: shape (4, 2), corner-indexed by QUAD_ORDER.
+    """
+    pos = neg = 0
+    for e in range(4):
+        i0 = QUAD_ORDER[e]
+        i1 = QUAD_ORDER[(e + 1) % 4]
+        ey = quad[i1, 0] - quad[i0, 0]
+        ez = quad[i1, 1] - quad[i0, 1]
+        cross = ey * (pz - quad[i0, 1]) - ez * (py - quad[i0, 0])
+        if cross > 0:
+            pos += 1
+        elif cross < 0:
+            neg += 1
+    return pos == 0 or neg == 0
+
+
+def find_unique_vertices(edges_in: List[Tuple[float, float]],
+                         RMin: float, RMax: float,
+                         EtaMin: float, EtaMax: float
+                         ) -> List[Tuple[float, float]]:
+    """Drop duplicate vertices and clip to the (R, Eta) bin.
+
+    Mirror of dg_find_unique_vertices.
+    """
+    out: List[Tuple[float, float]] = []
+    n = len(edges_in)
+    for i in range(n):
+        y, z = edges_in[i]
+        # dedup vs later entries (matches the C O(n²) scheme)
+        is_dup = False
+        for j in range(i + 1, n):
+            yj, zj = edges_in[j]
+            if math.hypot(y - yj, z - zj) == 0.0:
+                is_dup = True
+                break
+        if is_dup:
+            continue
+        RT = math.hypot(y, z)
+        ET = calc_eta_angle(y, z)
+        if not between(ET, EtaMin, EtaMax):
+            if between(ET + 360.0, EtaMin, EtaMax):
+                ET += 360.0
+            elif between(ET - 360.0, EtaMin, EtaMax):
+                ET -= 360.0
+        if not between(RT, RMin, RMax):
+            continue
+        if not between(ET, EtaMin, EtaMax):
+            continue
+        out.append((y, z))
+    return out
+
+
+def polygon_area(edges: List[Tuple[float, float]],
+                 RMin: float, RMax: float) -> float:
+    """Green's-theorem area of a polygon with mixed straight + arc edges.
+
+    Vertices are sorted counterclockwise around the centroid before applying
+    the line integral. Edges where both endpoints lie on R = RMin or R = RMax
+    are integrated as circular arcs (R²/2)·dθ; all other edges use the
+    Shoelace term.
+
+    Mirror of dg_polygon_area in DetectorGeometry.c.
+    """
+    n = len(edges)
+    if n < 3:
+        return 0.0
+    pts = np.asarray(edges, dtype=np.float64)
+    cx = float(pts[:, 0].mean())
+    cy = float(pts[:, 1].mean())
+    # Sort by angle around centroid (counterclockwise = increasing atan2)
+    angles = np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx)
+    # Match the C comparator: counterclockwise from +x axis, with stable
+    # ordering for collinear points by distance.  np.lexsort handles it.
+    dists = (pts[:, 0] - cx) ** 2 + (pts[:, 1] - cy) ** 2
+    order = np.lexsort((dists, -angles))   # primary sort = -angle (clockwise→counterclockwise) … see note
+    # The C code's comparator effectively sorts counterclockwise. The tightest
+    # match: sort by atan2 ascending (which is counterclockwise from -π to +π).
+    order = np.argsort(angles, kind="stable")
+    pts = pts[order]
+
+    RMin2 = RMin * RMin
+    RMax2 = RMax * RMax
+    tol = 1e-6
+    area = 0.0
+    for i in range(n):
+        y1, z1 = pts[i]
+        y2, z2 = pts[(i + 1) % n]
+        r1sq = y1 * y1 + z1 * z1
+        r2sq = y2 * y2 + z2 * z2
+        on_rmin = (abs(r1sq - RMin2) < tol * max(RMin2, 1e-30) and
+                   abs(r2sq - RMin2) < tol * max(RMin2, 1e-30))
+        on_rmax = (abs(r1sq - RMax2) < tol * max(RMax2, 1e-30) and
+                   abs(r2sq - RMax2) < tol * max(RMax2, 1e-30))
+        if on_rmin or on_rmax:
+            R = RMin if on_rmin else RMax
+            a1 = math.atan2(z1, y1)
+            a2 = math.atan2(z2, y2)
+            d = a2 - a1
+            if d > math.pi:
+                d -= 2.0 * math.pi
+            if d < -math.pi:
+                d += 2.0 * math.pi
+            area += (R * R * 0.5) * d
+        else:
+            area += 0.5 * (y1 * z2 - y2 * z1)
+    return abs(area)
+
+
+def pixel_bin_intersect(
+    cornerYZ: np.ndarray,            # shape (4, 2) of pixel corners in (Y, Z)
+    RMin: float, RMax: float, EtaMin: float, EtaMax: float,
+    bin_corners: Optional[np.ndarray] = None,   # shape (4, 2) bin corners
+) -> float:
+    """Compute intersection area of a pixel quad with one (R, Eta) bin.
+
+    This is the inner kernel called by ``detector_mapper.build_map`` for each
+    candidate (pixel, bin) pair. It mirrors the Green's-theorem section of
+    ``mapper_build_map`` in MapperCore.c.
+
+    ``bin_corners`` are the (Y,Z) of the bin's four (R, Eta) corners; if not
+    provided, they are computed from RMin/RMax/EtaMin/EtaMax.
+    """
+    if bin_corners is None:
+        bin_corners = np.empty((4, 2), dtype=np.float64)
+        bin_corners[0] = REta_to_YZ_scalar(RMin, EtaMin)
+        bin_corners[1] = REta_to_YZ_scalar(RMin, EtaMax)
+        bin_corners[2] = REta_to_YZ_scalar(RMax, EtaMin)
+        bin_corners[3] = REta_to_YZ_scalar(RMax, EtaMax)
+
+    edges: List[Tuple[float, float]] = []
+
+    # (1) pixel corners that lie inside the (R, Eta) bin
+    for m in range(4):
+        cy, cz = cornerYZ[m, 0], cornerYZ[m, 1]
+        RT = math.hypot(cy, cz)
+        ET = calc_eta_angle(cy, cz)
+        if EtaMin < -180.0 and _sign(ET) != _sign(EtaMin):
+            ET -= 360.0
+        if EtaMax > 180.0 and _sign(ET) != _sign(EtaMax):
+            ET += 360.0
+        if RMin <= RT <= RMax and EtaMin <= ET <= EtaMax:
+            edges.append((cy, cz))
+
+    # (2) bin corners that lie inside the pixel quad
+    for m in range(4):
+        by, bz = bin_corners[m, 0], bin_corners[m, 1]
+        if point_in_quad(by, bz, cornerYZ):
+            edges.append((by, bz))
+
+    # (3) edge-vs-edge intersections (only when we don't already have ≥4)
+    if len(edges) < 4:
+        for e in range(4):
+            i0 = QUAD_ORDER[e]
+            i1 = QUAD_ORDER[(e + 1) % 4]
+            py1, pz1 = cornerYZ[i0, 0], cornerYZ[i0, 1]
+            py2, pz2 = cornerYZ[i1, 0], cornerYZ[i1, 1]
+
+            for hit in circle_seg_intersect(py1, pz1, py2, pz2, RMin):
+                hy, hz = hit
+                EtaH = calc_eta_angle(hy, hz)
+                if EtaMin < -180.0 and _sign(EtaH) != _sign(EtaMin):
+                    EtaH -= 360.0
+                if EtaMax > 180.0 and _sign(EtaH) != _sign(EtaMax):
+                    EtaH += 360.0
+                if EtaMin - EPS <= EtaH <= EtaMax + EPS:
+                    edges.append((hy, hz))
+            for hit in circle_seg_intersect(py1, pz1, py2, pz2, RMax):
+                hy, hz = hit
+                EtaH = calc_eta_angle(hy, hz)
+                if EtaMin < -180.0 and _sign(EtaH) != _sign(EtaMin):
+                    EtaH -= 360.0
+                if EtaMax > 180.0 and _sign(EtaH) != _sign(EtaMax):
+                    EtaH += 360.0
+                if EtaMin - EPS <= EtaH <= EtaMax + EPS:
+                    edges.append((hy, hz))
+
+            hit = ray_seg_intersect(py1, pz1, py2, pz2, EtaMin)
+            if hit is not None:
+                hy, hz = hit
+                RH = math.hypot(hy, hz)
+                if RMin - EPS <= RH <= RMax + EPS:
+                    edges.append((hy, hz))
+            hit = ray_seg_intersect(py1, pz1, py2, pz2, EtaMax)
+            if hit is not None:
+                hy, hz = hit
+                RH = math.hypot(hy, hz)
+                if RMin - EPS <= RH <= RMax + EPS:
+                    edges.append((hy, hz))
+
+    if len(edges) < 3:
+        return 0.0
+    edges = find_unique_vertices(edges, RMin, RMax, EtaMin, EtaMax)
+    if len(edges) < 3:
+        return 0.0
+    return polygon_area(edges, RMin, RMax)

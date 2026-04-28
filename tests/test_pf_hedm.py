@@ -70,7 +70,13 @@ def parse_args():
     parser.add_argument('--compare-seeded', action='store_true',
                         help='After the normal pipeline, re-run indexer+refiner '
                              'seeded with GT orientations and compare results')
-    return parser.parse_args()
+    parser.add_argument('--backend', choices=['c', 'torch'], default='c',
+                        help="Peak-fitting backend: 'c' (PeaksFittingOMPZarrRefactor) or "
+                             "'torch' (peakfit_torch). Sets MIDAS_PEAKFIT_BACKEND.")
+    args = parser.parse_args()
+    import os as _os
+    _os.environ['MIDAS_PEAKFIT_BACKEND'] = args.backend
+    return args
 
 
 def generate_microstructure(work_dir):

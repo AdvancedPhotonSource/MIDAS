@@ -26,6 +26,9 @@ def parse_args():
     parser.add_argument("--cleanup-only", action="store_true", help="Only cleanup generated files, don't run any tests")
     parser.add_argument("--px-overlap", action="store_true", help="Also run pixel-overlap peaksearch test")
     parser.add_argument("--dual-dataset", action="store_true", help="Also run dual-dataset refinement sanity test")
+    parser.add_argument("--backend", choices=["c", "torch"], default="c",
+                        help="Peak-fitting backend: 'c' (PeaksFittingOMPZarrRefactor) or 'torch' (peakfit_torch). "
+                             "Forwarded to ff_MIDAS.py as -peakFitGPU 0/1.")
     parser.add_argument("--nGrains", type=int, default=0,
                         help="Generate N random grains instead of using existing GrainsSim.csv (0 = use existing)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for grain generation")
@@ -454,7 +457,7 @@ def main():
         )
 
     print(f"Starting FF_HEDM Benchmark using: {param_path}")
-    print(f"Using CPUs: {args.nCPUs}")
+    print(f"Using CPUs: {args.nCPUs}, peak-fitting backend: {args.backend}")
     
     # 1. Prepare Workspace (always use FF_HEDM/Example/ as the working directory)
     work_dir = midas_home / "FF_HEDM" / "Example"
@@ -537,16 +540,21 @@ def main():
         "-paramFN", test_param_file.name,
         "-nCPUs", str(args.nCPUs),
         "-dataFN", final_zip_name.name,
-        "-convertFiles", "0"
+        "-convertFiles", "0",
+        "-peakFitGPU", "1" if args.backend == "torch" else "0",
     ]
-    
+
     print(f"Running pipeline: {' '.join(cmd)}")
+    import time as _time
+    _t0 = _time.time()
     pipeline_res = subprocess.run(cmd, cwd=str(work_dir))
-    
+    _elapsed = _time.time() - _t0
+
     if pipeline_res.returncode != 0:
          print("Error: Pipeline ff_MIDAS.py execution failed.")
          sys.exit(1)
 
+    print(f"\n*** Pipeline (backend={args.backend}) finished in {_elapsed:.1f} s ***")
     print("\n*** Automated FF_HEDM Benchmark Suite Executed Successfully ***")
     
     # 7. Regression comparison against reference consolidated HDF5

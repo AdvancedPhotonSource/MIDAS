@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midas-peakfit"
+version = "0.1.0"
+description = "Differentiable PyTorch peak-fitting for FF-HEDM Zarr archives (drop-in replacement for PeaksFittingOMPZarrRefactor)"
+readme = "README.md"
+license = "BSD-3-Clause"
+requires-python = ">=3.9"
+authors = [
+    {name = "Hemant Sharma", email = "hsharma@anl.gov"},
+]
+keywords = [
+    "MIDAS", "HEDM", "peak-fitting", "differentiable", "PyTorch",
+    "far-field", "diffraction", "GPU",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy>=1.22",
+    "scipy>=1.9",
+    "zarr>=2.18,<3.0",
+    "numcodecs>=0.12",
+    "torch>=2.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "h5py>=3.0"]
+cuda = []  # placeholder; users install matching torch+cuda wheels themselves
+
+[project.urls]
+Homepage = "https://github.com/marinerhemant/MIDAS"
+Documentation = "https://github.com/marinerhemant/MIDAS/tree/master/manuals"
+Issues = "https://github.com/marinerhemant/MIDAS/issues"
+
+[project.scripts]
+peakfit_torch = "midas_peakfit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["midas_peakfit*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: full-pipeline parity tests (require example data)",
+    "gpu: tests that require CUDA",
+]

@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midas-integrate"
+version = "0.1.0"
+description = "Pure-Python radial integration for area X-ray detectors (MIDAS) — DetectorMapper + CSR integration + streaming server, CPU/GPU selectable"
+readme = "README.md"
+license = "BSD-3-Clause"
+requires-python = ">=3.9"
+authors = [
+    {name = "Hemant Sharma", email = "hsharma@anl.gov"},
+]
+keywords = [
+    "MIDAS",
+    "X-ray",
+    "diffraction",
+    "radial integration",
+    "azimuthal integration",
+    "HEDM",
+    "SAXS",
+    "WAXS",
+    "PDF",
+    "detector",
+    "PyTorch",
+    "CUDA",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy>=1.22",
+    "scipy>=1.9",
+    "torch>=2.1",
+    "tifffile>=2022.0",
+    "h5py>=3.0",
+    "numba>=0.59",   # JIT'd DetectorMapper kernel (parallel via prange)
+    "joblib>=1.2",   # used by ancillary tooling; not on the hot path
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+cuda = []  # users install matching torch+cuda wheels themselves
+
+[project.urls]
+Homepage = "https://github.com/marinerhemant/MIDAS"
+Documentation = "https://github.com/marinerhemant/MIDAS/tree/master/manuals"
+Issues = "https://github.com/marinerhemant/MIDAS/issues"
+
+[project.scripts]
+midas-detector-mapper = "midas_integrate.cli:detector_mapper_main"
+midas-integrate = "midas_integrate.cli:integrate_main"
+midas-integrate-server = "midas_integrate.cli:server_main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["midas_integrate*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: full-pipeline tests (>5s)",
+    "gpu: tests that require CUDA",
+    "needs_c_reference: needs the C MIDAS binaries for parity comparison",
+]

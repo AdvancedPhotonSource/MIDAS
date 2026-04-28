@@ -551,10 +551,10 @@ def create_app_with_retry(app_func):
     
     return wrapped_app
 
-def _peaks_impl(resultDir: str, zipFN: str, numProcs: int, bin_dir: str, blockNr: int = 0, 
-               numBlocks: int = 1, logger=None):
+def _peaks_impl(resultDir: str, zipFN: str, numProcs: int, bin_dir: str, blockNr: int = 0,
+               numBlocks: int = 1, peakFitGPU: int = 0, logger=None):
     """Implementation of peak search function.
-    
+
     Args:
         resultDir: Result directory
         zipFN: ZIP file name
@@ -562,6 +562,8 @@ def _peaks_impl(resultDir: str, zipFN: str, numProcs: int, bin_dir: str, blockNr
         bin_dir: Path to the bin directory
         blockNr: Block number
         numBlocks: Number of blocks
+        peakFitGPU: 1 = run the GPU/PyTorch peak-fitter (peakfit_torch),
+                    0 = run the OMP C tool PeaksFittingOMPZarrRefactor (default).
         logger: Logger instance
     """
     import subprocess
@@ -590,10 +592,15 @@ def _peaks_impl(resultDir: str, zipFN: str, numProcs: int, bin_dir: str, blockNr
             install_dir = os.path.abspath(os.path.join(script_dir, '..', '..'))
             env['MIDAS_INSTALL_DIR'] = install_dir
     
-    logger.info(f"Running PeaksFittingOMPZarrRefactor in {resultDir} for block {blockNr}/{numBlocks}")
-    
+    backend = 'torch' if int(peakFitGPU) == 1 else 'c'
+    logger.info(f"Running peak-fitting (backend={backend}) in {resultDir} for block {blockNr}/{numBlocks}")
+
     with open(outfile, 'w') as f, open(errfile, 'w') as f_err:
-        cmd = f"{os.path.join(bin_dir, 'PeaksFittingOMPZarrRefactor')} {zipFN} {blockNr} {numBlocks} {numProcs}"
+        if backend == 'torch':
+            # Drop-in PyTorch/GPU backend (packages/midas_peakfit). Same positional args.
+            cmd = f"peakfit_torch {zipFN} {blockNr} {numBlocks} {numProcs}"
+        else:
+            cmd = f"{os.path.join(bin_dir, 'PeaksFittingOMPZarrRefactor')} {zipFN} {blockNr} {numBlocks} {numProcs}"
         logger.info(f"Executing command: {cmd}")
         
         process = subprocess.Popen(
@@ -614,7 +621,7 @@ def _peaks_impl(resultDir: str, zipFN: str, numProcs: int, bin_dir: str, blockNr
             logger.error(error_msg)
             raise RuntimeError(error_msg)
         
-        logger.info(f"PeaksFittingOMPZarrRefactor completed successfully for block {blockNr}/{numBlocks}")
+        logger.info(f"Peak-fitting completed successfully (backend={backend}) for block {blockNr}/{numBlocks}")
 
 # Create retry-capable app
 peaks = create_app_with_retry(_peaks_impl)
@@ -866,6 +873,7 @@ def process_layer(layer_nr: int, top_res_dir: str, ps_fn: str, data_fn: str, num
                  provide_input_all: int, convert_files: int, do_peak_search: int,
                  peak_search_only: int, bin_directory: str, grains_file: str = '',
                  resume_from_stage: str = '', generate_h5: bool = False, useGPU: int = 0,
+                 peakFitGPU: int = 0,
                  run_sr: int = 0, srfac: int = 8, sr_config_path: str = 'auto',
                  save_sr_patches: int = 0, save_frame_good_coords: int = 0) -> None:
     """Process a single layer.
@@ -1073,7 +1081,7 @@ def process_layer(layer_nr: int, top_res_dir: str, ps_fn: str, data_fn: str, num
                 try:
                     res = []
                     for nodeNr in range(n_nodes):
-                        res.append(peaks(result_dir, outFStem, num_procs, bin_directory, blockNr=nodeNr, numBlocks=n_nodes))
+                        res.append(peaks(result_dir, outFStem, num_procs, bin_directory, blockNr=nodeNr, numBlocks=n_nodes, peakFitGPU=peakFitGPU))
                     outputs = [i.result() for i in res]
                     logger.info(f"PeakSearch done. Time till now: {time.time() - t0}")
                     ph5.mark('peak_search')
@@ -2000,6 +2008,9 @@ def main():
                         help=f'Stage name to restart from (re-runs all stages from that point). Valid stages: {", ".join(FF_STAGE_ORDER)}')
     parser.add_argument('-useGPU', type=int, required=False, default=0,
                         help='Use GPU binaries (IndexerGPU, FitPosOrStrainsGPU) instead of OMP versions. Default: 0')
+    parser.add_argument('-peakFitGPU', type=int, required=False, default=0,
+                        help='Use GPU/PyTorch peak fitter (peakfit_torch from midas-peakfit) instead of '
+                             'the OMP C tool PeaksFittingOMPZarrRefactor. Default: 0 (use C tool).')
     parser.add_argument('-generateH5', type=int, required=False, default=0,
                         help='Set to 1 to generate consolidated HDF5 at the end of each layer. Disabled by default.')
     parser.add_argument('-skipValidation', action='store_true',
@@ -2255,6 +2266,7 @@ def main():
                         resume_from_stage=resume_from_stage,
                         generate_h5=bool(args.generateH5),
                         useGPU=args.useGPU,
+                        peakFitGPU=args.peakFitGPU,
                         run_sr=run_sr,
                         srfac=srfac,
                         sr_config_path=sr_config_path,
@@ -2305,13 +2317,14 @@ def main():
                         resume_from_stage=resume_from_stage,
                         generate_h5=bool(args.generateH5),
                         useGPU=args.useGPU,
+                        peakFitGPU=args.peakFitGPU,
                         run_sr=run_sr,
                         srfac=srfac,
                         sr_config_path=sr_config_path,
                         save_sr_patches=save_sr_patches,
                         save_frame_good_coords=save_frame_good_coords,
                     )
-                    
+
                     progress.update(message=f"Layer {layer_nr} completed successfully")
                     
                 except Exception as e:

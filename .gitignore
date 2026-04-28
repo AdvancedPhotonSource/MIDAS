@@ -9,15 +9,10 @@ build/
 .pytest_cache/
 
 # LaTeX aux files (paper/ directory)
-packages/midas_stress/paper/*.aux
-packages/midas_stress/paper/*.log
-packages/midas_stress/paper/*.out
-packages/midas_stress/paper/*.bbl
-packages/midas_stress/paper/*.blg
-packages/midas_stress/paper/*.toc
-packages/midas_stress/paper/*.synctex.gz
-
-packages/midas_stress/paper
+packages/midas_integrate/dev
+packages/midas_peakfit/dev
+packages/midas_stress/dev
+packages/midas_params/dev/
 NF_HEDM/bin/*
 FF_HEDM/bin/*
 NF_HEDM/Cluster/*.kml
