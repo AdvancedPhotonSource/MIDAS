@@ -241,6 +241,71 @@ def test_merge_byte_exact_to_c(tmp_path: Path, goldens_dir: Path):
     )
 
 
+PX_GOLDENS = Path(__file__).parent / "data" / "c_goldens_px"
+
+
+@pytest.fixture(scope="module")
+def px_goldens_dir():
+    if not PX_GOLDENS.exists() or not (PX_GOLDENS / "AllPeaks_PX.bin").exists():
+        pytest.skip(
+            f"PX-mode C goldens not found at {PX_GOLDENS}. "
+            f"Generate via: python tests/test_ff_hedm.py -nCPUs 8 "
+            f"--no-cleanup --px-overlap, then copy LayerNr_1/* and "
+            f"Temp/AllPeaks_P{{S,X}}.bin into c_goldens_px/."
+        )
+    return PX_GOLDENS
+
+
+@pytest.mark.slow
+def test_merge_pixel_overlap_byte_exact_to_c(tmp_path: Path, px_goldens_dir: Path):
+    """Run pixel-overlap merge against the C goldens generated with
+    UsePixelOverlap=1.
+
+    On the FF_HEDM/Example dataset the C centroid and C pixel-overlap
+    outputs are byte-identical (peaks are sparse enough that both
+    matchers find the same 20 cluster pairs). Our corrected
+    pixel-overlap algorithm tracks Eta-sort permutations across both
+    arrays — a fix of an indexing bug in the C reference — so on this
+    dataset we should match C output. Synthetic-divergence tests live
+    in `test_merge_pixel_overlap_synthetic` (non-slow).
+    """
+    from midas_transforms.merge import merge_overlapping_peaks
+    from midas_transforms.io import csv as csv_io
+
+    ps_bin = px_goldens_dir / "AllPeaks_PS.bin"
+    px_bin = px_goldens_dir / "AllPeaks_PX.bin"
+    zarr_path = px_goldens_dir / "Au_FF_000001_pf.analysis.MIDAS.zip"
+    if not (ps_bin.exists() and px_bin.exists() and zarr_path.exists()):
+        pytest.skip("PX-mode goldens incomplete")
+
+    merge_overlapping_peaks(
+        zarr_path=zarr_path,
+        allpeaks_ps_bin=ps_bin,
+        allpeaks_px_bin=px_bin,
+        result_folder=tmp_path,
+        out_dir=tmp_path,
+        start_nr=1, end_nr=1440,
+        write=True,
+        device="cpu", dtype="float64",
+    )
+    new = csv_io.read_result_csv(tmp_path / "Result_StartNr_1_EndNr_1440.csv")
+    ref = csv_io.read_result_csv(px_goldens_dir / "Result_StartNr_1_EndNr_1440.csv")
+    assert new.shape == ref.shape, (
+        f"px-overlap merge row count: new={new.shape[0]} vs C={ref.shape[0]}"
+    )
+    np.testing.assert_array_equal(
+        new[:, 0].astype(int), ref[:, 0].astype(int),
+        err_msg="SpotID must match exactly.",
+    )
+    np.testing.assert_allclose(
+        new[:, 1:], ref[:, 1:], atol=1e-4, rtol=0,
+        err_msg=(
+            "px-overlap Result.csv numeric cols must match C output within "
+            "CSV round-trip precision (~1e-4 µm on positions, ~1e-6 on intensities)."
+        ),
+    )
+
+
 @pytest.mark.slow
 def test_merge_intensity_conservation(tmp_path: Path, goldens_dir: Path):
     """Total integrated intensity is invariant under merge."""

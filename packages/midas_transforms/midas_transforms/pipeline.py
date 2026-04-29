@@ -47,6 +47,7 @@ class Pipeline:
 
     zarr_params: ZarrParams
     allpeaks_ps_bin: Optional[Path] = None
+    allpeaks_px_bin: Optional[Path] = None
     result_folder: Path = Path(".")
     device: torch.device = field(default_factory=lambda: torch.device("cpu"))
     dtype: torch.dtype = torch.float64
@@ -60,6 +61,7 @@ class Pipeline:
         zarr_path: Union[str, Path],
         *,
         allpeaks_ps_bin: Optional[Union[str, Path]] = None,
+        allpeaks_px_bin: Optional[Union[str, Path]] = None,
         result_folder: Optional[Union[str, Path]] = None,
         device: Optional[Union[str, torch.device]] = None,
         dtype: Optional[Union[str, torch.dtype]] = None,
@@ -70,14 +72,19 @@ class Pipeline:
         dev = resolve_device(device)
         dt = resolve_dtype(dev, dtype)
         if allpeaks_ps_bin is None:
-            # Standard layout: ``<result_folder>/Temp/AllPeaks_PS.bin``.
             cand = rf / "Temp" / "AllPeaks_PS.bin"
             if not cand.exists():
                 cand = rf / "AllPeaks_PS.bin"
             allpeaks_ps_bin = cand if cand.exists() else None
+        if allpeaks_px_bin is None and zp.UsePixelOverlap:
+            cand = rf / "Temp" / "AllPeaks_PX.bin"
+            if not cand.exists():
+                cand = rf / "AllPeaks_PX.bin"
+            allpeaks_px_bin = cand if cand.exists() else None
         return cls(
             zarr_params=zp,
             allpeaks_ps_bin=Path(allpeaks_ps_bin) if allpeaks_ps_bin else None,
+            allpeaks_px_bin=Path(allpeaks_px_bin) if allpeaks_px_bin else None,
             result_folder=rf,
             device=dev,
             dtype=dt,
@@ -100,10 +107,13 @@ class Pipeline:
             )
         pr.merge = merge_overlapping_peaks(
             allpeaks_ps_bin=self.allpeaks_ps_bin,
+            allpeaks_px_bin=self.allpeaks_px_bin,
             result_folder=self.result_folder,
             overlap_length=self.overlap_length,
             skip_frame=self.zarr_params.SkipFrame,
             use_maxima_positions=bool(self.zarr_params.UseMaximaPositions),
+            use_pixel_overlap=bool(self.zarr_params.UsePixelOverlap),
+            nr_pixels=self.zarr_params.NrPixels,
             device=self.device, dtype=self.dtype,
             write=False,
         )

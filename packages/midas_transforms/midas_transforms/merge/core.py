@@ -94,18 +94,48 @@ def _read_sort_filter_frame(
     - Drop peaks with ``IntegratedIntensity < 1``.
     - qsort by Eta (stable; secondary key = original index for tie-break).
     """
+    arr, _ = _read_sort_filter_frame_with_pixels(
+        peaks, pixels=None, use_maxima_positions=use_maxima_positions,
+    )
+    return arr
+
+
+def _read_sort_filter_frame_with_pixels(
+    peaks: np.ndarray,
+    pixels: Optional[List[np.ndarray]],
+    use_maxima_positions: bool,
+) -> Tuple[np.ndarray, Optional[List[np.ndarray]]]:
+    """Mirror ``ReadSortFiles`` and apply the same permutation to pixel data.
+
+    The C ``MergeOverlappingPeaksAllZarr.c:741-755`` reads pixel data into
+    ``newPixels`` in PS-file order, then accesses ``newPixels[j]`` with j
+    from the Eta-sorted+filtered ``NewIDs[]`` index space — an indexing
+    bug that just happens to be benign on sparse-peak datasets. We fix
+    it here by tracking the same sort+filter permutation across both
+    arrays so ``pixels_sorted[j]`` actually corresponds to ``peaks_sorted[j]``.
+    """
     if peaks.size == 0:
-        return peaks
+        return peaks, ([] if pixels is not None else None)
     arr = peaks.copy()
     if use_maxima_positions:
         arr[:, COL_YCEN] = arr[:, COL_MAXY]
         arr[:, COL_ZCEN] = arr[:, COL_MAXZ]
-    arr = arr[arr[:, COL_II] >= 1.0]
-    if arr.shape[0] == 0:
-        return arr
+    keep = arr[:, COL_II] >= 1.0
+    keep_idx = np.flatnonzero(keep)
+    if keep_idx.size == 0:
+        return arr[keep], ([] if pixels is not None else None)
+    arr = arr[keep_idx]
+    pix_kept = (
+        [pixels[i] for i in keep_idx]
+        if pixels is not None
+        else None
+    )
     # Stable sort by Eta with original-index tie-break.
     order = np.lexsort((np.arange(arr.shape[0]), arr[:, COL_ETA]))
-    return arr[order]
+    arr = arr[order]
+    if pix_kept is not None:
+        pix_kept = [pix_kept[i] for i in order]
+    return arr, pix_kept
 
 
 def _seed_current_from_frame(
@@ -229,6 +259,89 @@ def _mutual_nearest(
     return out_best, out_has
 
 
+def _pixel_overlap_match(
+    cur_pixels: List[np.ndarray],
+    new_pixels: List[np.ndarray],
+    nr_pixels: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Per-frame pixel-overlap matching, mirroring the C semantics in
+    ``MergeOverlappingPeaksAllZarr.c:756-810``.
+
+    Algorithm:
+      1. Build a label map (``nr_pixels x nr_pixels`` int32, initialised to 0)
+         by painting each cur peak's pixel list with its 1-based index.
+      2. Forward pass: for each new peak j, look up its pixel list in the
+         label map and tally counts per non-zero label. Best label
+         (highest count) is the cur peak it most overlaps with.
+      3. Reverse pass: for each cur peak i, scan all new peaks claiming
+         cur i and pick the one with the highest overlap count. That's
+         the match.
+
+    Returns ``(best_for_cur, has_match_cur)``: parallel to ``_mutual_nearest``.
+    """
+    n_cur = len(cur_pixels)
+    n_new = len(new_pixels)
+    out_best = np.full(n_cur, -1, dtype=np.int64)
+    out_has = np.zeros(n_cur, dtype=bool)
+    if n_cur == 0 or n_new == 0:
+        return out_best, out_has
+
+    # Build label map. Use raveled (z * nr + y) to match the C
+    # ``BuildLabelMap`` indexing: ``idx = (int)pp[pk].y[i] * nrPixels + (int)pp[pk].z[i]``
+    # That's actually y * nr_pixels + z (y is the row coordinate in C's
+    # convention here). Match it exactly.
+    label_map = np.zeros(nr_pixels * nr_pixels, dtype=np.int32)
+    painted_indices: List[np.ndarray] = []
+    for k, pix in enumerate(cur_pixels):
+        if pix is None or pix.size == 0:
+            painted_indices.append(np.empty(0, dtype=np.int64))
+            continue
+        # Bounds-check: drop pixels outside the detector (shouldn't happen,
+        # but the C code can write garbage if y/z are oob).
+        y = pix[:, 0].astype(np.int64)
+        z = pix[:, 1].astype(np.int64)
+        in_bounds = (y >= 0) & (y < nr_pixels) & (z >= 0) & (z < nr_pixels)
+        idx = (y[in_bounds] * nr_pixels + z[in_bounds])
+        label_map[idx] = k + 1   # 1-based
+        painted_indices.append(idx)
+
+    # Forward pass.
+    forward_label = np.full(n_new, 0, dtype=np.int64)   # 0 = no match
+    forward_count = np.zeros(n_new, dtype=np.int64)
+    for j, pix in enumerate(new_pixels):
+        if pix is None or pix.size == 0:
+            continue
+        y = pix[:, 0].astype(np.int64)
+        z = pix[:, 1].astype(np.int64)
+        in_bounds = (y >= 0) & (y < nr_pixels) & (z >= 0) & (z < nr_pixels)
+        if not in_bounds.any():
+            continue
+        idx = (y[in_bounds] * nr_pixels + z[in_bounds])
+        labels = label_map[idx]
+        # Count non-zero labels and pick the most frequent.
+        nz = labels[labels > 0]
+        if nz.size == 0:
+            continue
+        # ``np.bincount`` over the small set of distinct labels.
+        unique, counts = np.unique(nz, return_counts=True)
+        best_pos = int(np.argmax(counts))
+        forward_label[j] = int(unique[best_pos])
+        forward_count[j] = int(counts[best_pos])
+
+    # Reverse pass: for each cur i (1-based label = i+1), find new peak with
+    # max forward_count among those whose forward_label points at cur i.
+    for i in range(n_cur):
+        label_i = i + 1
+        candidates = np.flatnonzero(forward_label == label_i)
+        if candidates.size == 0:
+            continue
+        best_j = int(candidates[np.argmax(forward_count[candidates])])
+        out_best[i] = best_j
+        out_has[i] = True
+
+    return out_best, out_has
+
+
 def _accumulate_match(cur_row: np.ndarray, new_row: np.ndarray) -> None:
     """Update one ``CurrentIDs`` row in-place with one matched new peak.
 
@@ -316,8 +429,19 @@ def _merge_frames(
     overlap_length: float,
     use_maxima_positions: bool = False,
     skip_frame: int = 0,
+    pixel_frames: Optional[List[List[np.ndarray]]] = None,
+    nr_pixels: int = 0,
 ) -> Tuple[np.ndarray, List[Tuple[int, int, int]]]:
-    """Frame-by-frame mutual-nearest merge. Returns (Result_csv_array, merge_map)."""
+    """Frame-by-frame merge. Returns (Result_csv_array, merge_map).
+
+    If ``pixel_frames`` is provided (and ``nr_pixels > 0``), pixel-overlap
+    matching is used per frame; otherwise centroid-distance.
+
+    ``pixel_frames`` must be in PS-file order (one list per frame, one
+    ``(n_px, 2)`` int16 array per peak); this routine applies the same
+    Eta-sort + II>=1 permutation as ``_read_sort_filter_frame`` so that
+    ``proc[fi][j]`` and ``pix[fi][j]`` correspond.
+    """
     if not frames:
         return np.empty((0, 17), dtype=np.float64), []
 
@@ -325,11 +449,24 @@ def _merge_frames(
     # we mirror by truncating the frame list.
     if skip_frame > 0:
         frames = frames[: max(len(frames) - skip_frame, 0)]
+        if pixel_frames is not None:
+            pixel_frames = pixel_frames[: max(len(pixel_frames) - skip_frame, 0)]
     if not frames:
         return np.empty((0, 17), dtype=np.float64), []
 
-    # Pre-process every frame: filter II<1, sort by Eta.
-    proc = [_read_sort_filter_frame(f, use_maxima_positions) for f in frames]
+    use_pixel_overlap = pixel_frames is not None and nr_pixels > 0
+
+    # Pre-process every frame: filter II<1, sort by Eta. Apply the same
+    # permutation to pixel data so peaks and pixels stay aligned.
+    proc: List[np.ndarray] = []
+    pix: List[Optional[List[np.ndarray]]] = []
+    for fi, f in enumerate(frames):
+        pf = pixel_frames[fi] if use_pixel_overlap else None
+        peaks_s, pix_s = _read_sort_filter_frame_with_pixels(
+            f, pf, use_maxima_positions,
+        )
+        proc.append(peaks_s)
+        pix.append(pix_s)
 
     # Find first non-empty frame.
     first = 0
@@ -339,6 +476,7 @@ def _merge_frames(
         return np.empty((0, 17), dtype=np.float64), []
 
     cur, constituents = _seed_current_from_frame(proc[first], frame_nr=first + 1)
+    cur_pixels: List[np.ndarray] = list(pix[first]) if use_pixel_overlap else []
     finalised: List[np.ndarray] = []
     merge_map: List[Tuple[int, int, int]] = []
     spot_id_nr = 1
@@ -346,6 +484,7 @@ def _merge_frames(
     # Main frame loop. Mirrors MergeOverlappingPeaksAllZarr.c:735-1029.
     for fi in range(first + 1, len(proc)):
         new_peaks = proc[fi]
+        new_pix = pix[fi] if use_pixel_overlap else None
         frame_nr = fi + 1   # 1-based, like the C code
 
         if new_peaks.shape[0] == 0:
@@ -357,9 +496,18 @@ def _merge_frames(
                 spot_id_nr += 1
             cur = np.zeros((0, 19), dtype=np.float64)
             constituents = []
+            cur_pixels = []
             continue
 
-        best_for_cur, matched = _mutual_nearest(cur, new_peaks, overlap_length)
+        # Choose matcher: pixel-overlap when both sides have pixel data,
+        # else centroid distance (mirrors C's ``if (UsePixelOverlap &&
+        # nCurPx > 0 && nNewPx > 0)`` branch).
+        if use_pixel_overlap and len(cur_pixels) > 0 and new_pix is not None and len(new_pix) > 0:
+            best_for_cur, matched = _pixel_overlap_match(
+                cur_pixels, new_pix, nr_pixels,
+            )
+        else:
+            best_for_cur, matched = _mutual_nearest(cur, new_peaks, overlap_length)
 
         # Update matched current rows (cur-index order, matches C).
         new_taken = np.zeros(new_peaks.shape[0], dtype=bool)
@@ -386,6 +534,13 @@ def _merge_frames(
         keep_cur = np.flatnonzero(matched)
         new_cur = cur[keep_cur].copy()
         new_cons = [constituents[i] for i in keep_cur]
+        # Pixel data tracking: for matched cur, pixels become the new peak's
+        # pixels (since cur's location was just updated to new's). For
+        # unmatched new, pixels stay as their own.
+        new_cur_pixels: List[np.ndarray] = []
+        if use_pixel_overlap and new_pix is not None:
+            for i in keep_cur:
+                new_cur_pixels.append(new_pix[int(best_for_cur[i])])
 
         unmatched_new = np.flatnonzero(~new_taken)
         if unmatched_new.size > 0:
@@ -394,9 +549,13 @@ def _merge_frames(
             )
             new_cur = np.concatenate([new_cur, seed_arr], axis=0)
             new_cons.extend(seed_cons)
+            if use_pixel_overlap and new_pix is not None:
+                for j in unmatched_new:
+                    new_cur_pixels.append(new_pix[int(j)])
 
         cur = new_cur
         constituents = new_cons
+        cur_pixels = new_cur_pixels
 
     # Final flush: every remaining cur row gets a SpotIDNr and is written.
     for i in range(cur.shape[0]):
@@ -440,16 +599,18 @@ def merge_overlapping_peaks(
     zarr_path: Optional[Union[str, Path]] = None,
     *,
     allpeaks_ps_bin: Optional[Union[str, Path]] = None,
+    allpeaks_px_bin: Optional[Union[str, Path]] = None,
     result_folder: Union[str, Path] = ".",
     overlap_length: Optional[float] = None,
     skip_frame: int = 0,
-    use_pixel_overlap: bool = False,
+    use_pixel_overlap: Optional[bool] = None,
     use_maxima_positions: bool = False,
     nr_pixels: Optional[int] = None,
     start_nr: int = 1,
     end_nr: Optional[int] = None,
     out_dir: Optional[Union[str, Path]] = None,
     frames: Optional[List[np.ndarray]] = None,
+    pixel_frames: Optional[List[List[np.ndarray]]] = None,
     device: Optional[Union[str, torch.device]] = None,
     dtype: Optional[Union[str, torch.dtype]] = None,
     write: bool = True,
@@ -457,22 +618,30 @@ def merge_overlapping_peaks(
     """Drop-in replacement for ``MergeOverlappingPeaksAllZarr``.
 
     Inputs are typically read from ``<result_folder>/Temp/AllPeaks_PS.bin``
-    (the ``ConsolidatedPeakReader`` blob written by midas-peakfit /
-    PeaksFittingOMPZarrRefactor). Override paths via ``allpeaks_ps_bin=`` /
-    ``frames=`` for in-memory or relocated inputs.
-    """
-    if use_pixel_overlap:
-        raise NotImplementedError(
-            "Pixel-overlap merge mode is not yet supported in midas-transforms "
-            "v0.1.0. Use the C MergeOverlappingPeaksAllZarr or set "
-            "use_pixel_overlap=False."
-        )
+    and (in pixel-overlap mode) ``<result_folder>/Temp/AllPeaks_PX.bin``,
+    the ``ConsolidatedPeakReader`` / ``ConsolidatedPixelReader`` blobs
+    written by midas-peakfit / PeaksFittingOMPZarrRefactor. Override paths
+    via ``allpeaks_ps_bin=`` / ``allpeaks_px_bin=`` / ``frames=`` /
+    ``pixel_frames=`` for in-memory or relocated inputs.
 
+    Pixel-overlap mode (gated by ``UsePixelOverlap=1`` in the Zarr or by
+    ``use_pixel_overlap=True``) builds a per-frame label map from cur
+    peaks' pixel lists and matches new peaks by shared-pixel count. The
+    correct algorithm tracks Eta-sort and II>=1 permutations across both
+    arrays so that ``new_pixels[j]`` corresponds to ``new_peaks[j]`` —
+    a **fix** of an indexing bug in the C reference where the sort+filter
+    was applied only to the peak-summary array (file-order pixel data
+    paired with sorted-filter peak indices). On sparse-peak datasets the
+    C bug is benign (pixel-overlap and centroid output coincide); on
+    dense datasets the corrected algorithm produces semantically right
+    matches.
+    """
     rf = Path(result_folder)
     out_dir = Path(out_dir) if out_dir is not None else rf
 
     # Load Zarr params if a Zarr path was provided (the C code reads
-    # OverlapLength / SkipFrame / UseMaximaPositions from there).
+    # OverlapLength / SkipFrame / UseMaximaPositions / UsePixelOverlap
+    # from there).
     if zarr_path is not None:
         zp = read_zarr_params(zarr_path)
         if overlap_length is None:
@@ -483,10 +652,14 @@ def merge_overlapping_peaks(
             use_maxima_positions = bool(zp.UseMaximaPositions)
         if nr_pixels is None:
             nr_pixels = zp.NrPixels
+        if use_pixel_overlap is None:
+            use_pixel_overlap = bool(zp.UsePixelOverlap)
     if overlap_length is None:
         # C default: ``MarginOmegaOverlap = sqrt(4) = 2.0``
         # (MergeOverlappingPeaksAllZarr.c:524).
         overlap_length = 2.0
+    if use_pixel_overlap is None:
+        use_pixel_overlap = False
 
     # Load frames.
     if frames is None:
@@ -502,6 +675,25 @@ def merge_overlapping_peaks(
             )
         frames = zarr_io.read_allpeaks_ps_frames(allpeaks_ps_bin)
 
+    # Load pixel data when pixel-overlap mode is requested.
+    if use_pixel_overlap and pixel_frames is None:
+        if allpeaks_px_bin is None:
+            allpeaks_px_bin = rf / "Temp" / "AllPeaks_PX.bin"
+            if not Path(allpeaks_px_bin).exists():
+                allpeaks_px_bin = rf / "AllPeaks_PX.bin"
+        allpeaks_px_bin = Path(allpeaks_px_bin)
+        if not allpeaks_px_bin.exists():
+            raise FileNotFoundError(
+                f"AllPeaks_PX.bin not found at {allpeaks_px_bin}. "
+                f"This file is written by midas-peakfit and is required when "
+                f"UsePixelOverlap=1."
+            )
+        nr_pixels_from_file, pixel_frames = zarr_io.read_allpeaks_px_frames(
+            allpeaks_px_bin,
+        )
+        if not nr_pixels:
+            nr_pixels = nr_pixels_from_file
+
     if end_nr is None:
         end_nr = max(start_nr + len(frames) - 1, start_nr)
 
@@ -510,6 +702,8 @@ def merge_overlapping_peaks(
         overlap_length=float(overlap_length),
         use_maxima_positions=use_maxima_positions,
         skip_frame=skip_frame,
+        pixel_frames=pixel_frames if use_pixel_overlap else None,
+        nr_pixels=int(nr_pixels) if nr_pixels else 0,
     )
 
     if write:

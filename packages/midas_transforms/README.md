@@ -91,15 +91,14 @@ workflow's `merge_overlaps`, `calc_radius`, `data_transform`, and
 binaries. Outputs are byte-compatible (or numerically equivalent for
 the `DoFit` geometry refine).
 
-## Limits in v0.1.0.dev0
+## Limits
 
-- **Pixel-overlap merge mode** (`UsePixelOverlap=1`) is not yet supported
-  — use the C `MergeOverlappingPeaksAllZarr` for that path.
 - **Scanning workflows** (`SaveBinDataScanning`, `MergeMultipleScans`) are
   out of scope here; they belong with the broader scanning pipeline.
-- **Byte-level regression vs C** is in progress. Unit tests cover kernel
-  correctness; full end-to-end byte-equality against C goldens lands in
-  v0.1.0 proper.
+- **ResidualCorrectionMap** filename is parsed from Zarr but the per-pixel
+  ΔR map isn't yet sampled in `apply_tilt_distortion` (the bilinear
+  sampler exists; the `np.fromfile(...).reshape(NrPixelsZ, NrPixelsY)`
+  load is a TODO in `fit_setup/core.py`).
 
 ## See also
 

@@ -85,3 +85,57 @@ def read_allpeaks_px(path: Union[str, Path]) -> Optional[np.ndarray]:
     if not p.exists():
         return None
     return np.fromfile(p, dtype=np.uint8)
+
+
+def read_allpeaks_px_frames(path: Union[str, Path]):
+    """Read ``AllPeaks_PX.bin`` and return ``(nr_pixels, frames)``.
+
+    ``frames`` is a list of length ``nFrames``; each entry is a list of
+    ``(n_px, 2)`` ``int16`` arrays — the (y, z) pixel indices for each peak
+    in PS-file order (NOT Eta-sorted; same per-peak order as
+    ``AllPeaks_PS.bin``).
+
+    File format (``PeaksFittingConsolidatedIO.h:215-264``)::
+
+        Header:
+            int32 nFrames
+            int32 nrPixels
+            int32 nPeaks[nFrames]
+            int64 offsets[nFrames]    -- byte offsets from file start
+        Data: for each frame:
+            for each peak:
+                int32 nPx
+                (int16 y, int16 z) x nPx
+    """
+    p = Path(path)
+    raw = np.fromfile(p, dtype=np.uint8)
+    if raw.size < 8:
+        raise ValueError(f"{path}: too small for AllPeaks_PX.bin")
+    n_frames = int(np.frombuffer(raw[:4], dtype=np.int32)[0])
+    nr_pixels = int(np.frombuffer(raw[4:8], dtype=np.int32)[0])
+    header_size = 8 + n_frames * 4 + n_frames * 8
+    n_peaks = np.frombuffer(raw[8 : 8 + n_frames * 4], dtype=np.int32).copy()
+    offsets = np.frombuffer(
+        raw[8 + n_frames * 4 : 8 + n_frames * 4 + n_frames * 8], dtype=np.int64
+    ).copy()
+
+    frames = []
+    for f in range(n_frames):
+        n = int(n_peaks[f])
+        if n == 0:
+            frames.append([])
+            continue
+        cursor = int(offsets[f])
+        peaks_pixels = []
+        for _ in range(n):
+            n_px = int(np.frombuffer(raw[cursor : cursor + 4], dtype=np.int32)[0])
+            cursor += 4
+            if n_px > 0:
+                yz_bytes = raw[cursor : cursor + n_px * 4]
+                cursor += n_px * 4
+                yz = np.frombuffer(yz_bytes, dtype=np.int16).reshape(n_px, 2).copy()
+            else:
+                yz = np.empty((0, 2), dtype=np.int16)
+            peaks_pixels.append(yz)
+        frames.append(peaks_pixels)
+    return nr_pixels, frames

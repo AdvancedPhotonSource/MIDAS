@@ -37,8 +37,14 @@ def merge_main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--allpeaks-ps-bin", default=None,
                    help="Override the AllPeaks_PS.bin path "
                         "(default: <result-folder>/Temp/AllPeaks_PS.bin).")
+    p.add_argument("--allpeaks-px-bin", default=None,
+                   help="Override the AllPeaks_PX.bin path "
+                        "(default: <result-folder>/Temp/AllPeaks_PX.bin). "
+                        "Used only when UsePixelOverlap=1.")
     p.add_argument("--overlap-length", type=float, default=None,
                    help="Centroid distance threshold in px (default: from Zarr params, fallback 2.0).")
+    p.add_argument("--use-pixel-overlap", type=int, choices=[0, 1], default=None,
+                   help="Override Zarr's UsePixelOverlap flag (0=centroid, 1=pixel-overlap).")
     args = p.parse_args(argv)
 
     from .merge import merge_overlapping_peaks
@@ -46,13 +52,16 @@ def merge_main(argv: Optional[List[str]] = None) -> int:
     rf = Path(args.result_folder) if args.result_folder else Path(args.zarr_path).parent
     zp = read_zarr_params(args.zarr_path)
     overlap = args.overlap_length if args.overlap_length is not None else zp.OverlapLength
+    use_px = bool(args.use_pixel_overlap) if args.use_pixel_overlap is not None else None
     merge_overlapping_peaks(
         zarr_path=args.zarr_path,
         allpeaks_ps_bin=args.allpeaks_ps_bin,
+        allpeaks_px_bin=args.allpeaks_px_bin,
         result_folder=rf,
         overlap_length=overlap,
         skip_frame=zp.SkipFrame,
         use_maxima_positions=bool(zp.UseMaximaPositions),
+        use_pixel_overlap=use_px,
         end_nr=zp.EndNr if zp.EndNr > 0 else None,
         device=args.device, dtype=args.dtype,
         write=True,
