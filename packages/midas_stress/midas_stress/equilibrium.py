@@ -12,57 +12,77 @@ materials, a d0 error produces orientation-dependent stress artifacts
 with both hydrostatic and deviatoric components; the strain-level
 correction handles this correctly by solving for the scalar isotropic
 strain error before applying Hooke's law.
+
+As of 0.6.0, the two core constraint functions
+(``volume_average_stress_constraint``, ``hydrostatic_deviatoric_decomposition``)
+accept torch.Tensor inputs transparently. The iterative scipy-driven
+utilities (``recover_d0``, ``equilibrium_correction_uncertainty``, ...)
+remain NumPy-only.
 """
 
 from typing import Optional, Tuple
 
 import numpy as np
+import torch
 
 from .tensor import tensor_to_voigt, voigt_to_tensor, rotation_voigt_mandel
 
 
+def _is_torch(*args) -> bool:
+    return any(isinstance(a, torch.Tensor) for a in args)
+
+
 def volume_average_stress_constraint(
-    stresses: np.ndarray,
-    volumes: np.ndarray,
-    applied_stress: Optional[np.ndarray] = None,
-) -> np.ndarray:
+    stresses,
+    volumes,
+    applied_stress=None,
+):
     """Apply volume-average stress constraint (FF-1).
 
     Enforces: sum(V_g * sigma_g) / V_total = sigma_applied
 
     Parameters
     ----------
-    stresses : ndarray (N, 3, 3) or (N, 6)
+    stresses : ndarray or torch.Tensor (N, 3, 3) or (N, 6)
         Per-grain stress tensors.
-    volumes : ndarray (N,)
+    volumes : ndarray or torch.Tensor (N,)
         Grain volumes (relative sizes suffice).
-    applied_stress : ndarray (3, 3) or (6,), optional
+    applied_stress : ndarray, torch.Tensor, or None, optional
         Applied macroscopic stress. Default: zero (unloaded sample).
 
     Returns
     -------
-    ndarray same shape as input, corrected stresses.
+    Same backend as input, same shape as input.
     """
     is_voigt = stresses.ndim == 2 and stresses.shape[-1] == 6
-    if is_voigt:
-        sig = stresses.copy()
-    else:
-        sig = tensor_to_voigt(stresses)
+    sig = stresses.clone() if isinstance(stresses, torch.Tensor) else stresses.copy()
+    if not is_voigt:
+        sig = tensor_to_voigt(sig)
 
     if applied_stress is None:
-        sig_app = np.zeros(6)
+        if isinstance(sig, torch.Tensor):
+            sig_app = torch.zeros(6, dtype=sig.dtype, device=sig.device)
+        else:
+            sig_app = np.zeros(6)
     elif applied_stress.shape == (3, 3):
         sig_app = tensor_to_voigt(applied_stress)
     else:
-        sig_app = applied_stress.copy()
+        sig_app = applied_stress.clone() if isinstance(applied_stress, torch.Tensor) \
+            else applied_stress.copy()
 
     V_total = volumes.sum()
     w = volumes / V_total
 
-    sig_avg = np.sum(w[:, None] * sig, axis=0)
+    if isinstance(sig, torch.Tensor):
+        sig_avg = (w.unsqueeze(-1) * sig).sum(dim=0)
+    else:
+        sig_avg = np.sum(w[:, None] * sig, axis=0)
     delta_sig = sig_app - sig_avg
 
-    sig_corrected = sig + delta_sig[None, :]
+    if isinstance(sig, torch.Tensor):
+        sig_corrected = sig + delta_sig.unsqueeze(0)
+    else:
+        sig_corrected = sig + delta_sig[None, :]
 
     if not is_voigt:
         return voigt_to_tensor(sig_corrected)
@@ -98,6 +118,11 @@ def hydrostatic_deviatoric_decomposition(
     corrected : ndarray (N, 3, 3)
         Full stress tensors with equilibrium-consistent hydrostatic part.
     """
+    if isinstance(stresses, torch.Tensor):
+        return _hydrostatic_deviatoric_decomposition_torch(
+            stresses, volumes, applied_stress,
+        )
+
     if applied_stress is None:
         applied_stress = np.zeros((3, 3))
 
@@ -121,6 +146,37 @@ def hydrostatic_deviatoric_decomposition(
     deviatoric_corrected = deviatoric + dev_correction[None, :, :]
 
     corrected = hydro_corrected[:, None, None] * I[None, :, :] + deviatoric_corrected
+    return hydro_corrected, deviatoric_corrected, corrected
+
+
+def _hydrostatic_deviatoric_decomposition_torch(stresses, volumes, applied_stress):
+    """Torch path for `hydrostatic_deviatoric_decomposition`."""
+    dtype, device = stresses.dtype, stresses.device
+    if applied_stress is None:
+        applied_stress = torch.zeros((3, 3), dtype=dtype, device=device)
+    elif not isinstance(applied_stress, torch.Tensor):
+        applied_stress = torch.as_tensor(applied_stress, dtype=dtype, device=device)
+    if not isinstance(volumes, torch.Tensor):
+        volumes = torch.as_tensor(volumes, dtype=dtype, device=device)
+
+    I = torch.eye(3, dtype=dtype, device=device)
+    V_total = volumes.sum()
+    w = volumes / V_total
+
+    hydro_raw = torch.diagonal(stresses, dim1=-2, dim2=-1).sum(dim=-1) / 3.0
+    deviatoric = stresses - hydro_raw[:, None, None] * I
+
+    target_hydro = torch.diagonal(applied_stress, dim1=-2, dim2=-1).sum() / 3.0
+    current_avg_hydro = (w * hydro_raw).sum()
+    hydro_shift = target_hydro - current_avg_hydro
+    hydro_corrected = hydro_raw + hydro_shift
+
+    dev_applied = applied_stress - target_hydro * I
+    dev_avg = (w[:, None, None] * deviatoric).sum(dim=0)
+    dev_correction = dev_applied - dev_avg
+    deviatoric_corrected = deviatoric + dev_correction[None, :, :]
+
+    corrected = hydro_corrected[:, None, None] * I + deviatoric_corrected
     return hydro_corrected, deviatoric_corrected, corrected
 
 

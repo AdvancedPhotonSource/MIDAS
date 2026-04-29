@@ -29,6 +29,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import torch
 
 
 # ===================================================================
@@ -448,11 +449,11 @@ def get_slip_systems_for_material(
 #  Slip-system transforms and Schmid factors
 # ===================================================================
 
-def slip_systems_to_lab(
-    orient: np.ndarray,
-    n_crystal: np.ndarray,
-    b_crystal: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray]:
+def _is_torch(*args) -> bool:
+    return any(isinstance(a, torch.Tensor) for a in args)
+
+
+def slip_systems_to_lab(orient, n_crystal, b_crystal):
     """Rotate slip-system normals / directions from crystal to lab frame.
 
     Uses the convention ``v_lab = U @ v_crystal`` where ``U`` is the
@@ -460,15 +461,16 @@ def slip_systems_to_lab(
 
     Parameters
     ----------
-    orient : ndarray (N, 3, 3) or (3, 3)
-    n_crystal : ndarray (M, 3)
-    b_crystal : ndarray (M, 3)
+    orient : ndarray or torch.Tensor (N, 3, 3) or (3, 3)
+    n_crystal : ndarray or torch.Tensor (M, 3)
+    b_crystal : ndarray or torch.Tensor (M, 3)
 
     Returns
     -------
-    n_lab : ndarray (N, M, 3) (or (M, 3) if ``orient`` is (3, 3))
-    b_lab : same shape
+    (n_lab, b_lab) tensors. Backend matches the input.
     """
+    if _is_torch(orient, n_crystal, b_crystal):
+        return _slip_systems_to_lab_torch(orient, n_crystal, b_crystal)
     orient = np.asarray(orient)
     single = orient.ndim == 2
     if single:
@@ -476,6 +478,25 @@ def slip_systems_to_lab(
     # U @ n^T for each grain: einsum over the (M, 3) direction array.
     n_lab = np.einsum('gij,mj->gmi', orient, n_crystal)
     b_lab = np.einsum('gij,mj->gmi', orient, b_crystal)
+    if single:
+        return n_lab[0], b_lab[0]
+    return n_lab, b_lab
+
+
+def _slip_systems_to_lab_torch(orient, n_crystal, b_crystal):
+    """Torch path for slip_systems_to_lab."""
+    if not isinstance(orient, torch.Tensor):
+        ref = next(x for x in (n_crystal, b_crystal) if isinstance(x, torch.Tensor))
+        orient = torch.as_tensor(orient, dtype=ref.dtype, device=ref.device)
+    if not isinstance(n_crystal, torch.Tensor):
+        n_crystal = torch.as_tensor(n_crystal, dtype=orient.dtype, device=orient.device)
+    if not isinstance(b_crystal, torch.Tensor):
+        b_crystal = torch.as_tensor(b_crystal, dtype=orient.dtype, device=orient.device)
+    single = orient.dim() == 2
+    if single:
+        orient = orient.unsqueeze(0)
+    n_lab = torch.einsum('gij,mj->gmi', orient, n_crystal)
+    b_lab = torch.einsum('gij,mj->gmi', orient, b_crystal)
     if single:
         return n_lab[0], b_lab[0]
     return n_lab, b_lab
@@ -514,6 +535,18 @@ def schmid_factor(
     -------
     ndarray (N, M) of Schmid factors.
     """
+    if _is_torch(orient, load_dir, n_crystal, b_crystal):
+        if not isinstance(load_dir, torch.Tensor):
+            ref = orient if isinstance(orient, torch.Tensor) else (
+                n_crystal if isinstance(n_crystal, torch.Tensor) else b_crystal
+            )
+            load_dir = torch.as_tensor(load_dir, dtype=ref.dtype, device=ref.device)
+        load_dir = load_dir / torch.linalg.vector_norm(load_dir)
+        n_lab, b_lab = slip_systems_to_lab(orient, n_crystal, b_crystal)
+        n_dot_l = torch.einsum('gmi,i->gm', n_lab, load_dir)
+        b_dot_l = torch.einsum('gmi,i->gm', b_lab, load_dir)
+        m = n_dot_l * b_dot_l
+        return m.abs() if absolute else m
     load_dir = np.asarray(load_dir, dtype=np.float64)
     load_dir = load_dir / np.linalg.norm(load_dir)
     n_lab, b_lab = slip_systems_to_lab(orient, n_crystal, b_crystal)
@@ -551,6 +584,10 @@ def resolved_shear_stress(
     ndarray (N, M) — resolved shear stress for each grain on each
     system, in the same units as ``stress``.
     """
+    if _is_torch(stress, orient, n_crystal, b_crystal):
+        n_lab, b_lab = slip_systems_to_lab(orient, n_crystal, b_crystal)
+        sb = torch.einsum('gij,gmj->gmi', stress, b_lab)
+        return torch.einsum('gmi,gmi->gm', n_lab, sb)
     n_lab, b_lab = slip_systems_to_lab(orient, n_crystal, b_crystal)
     # sigma @ b_lab : (N, M, 3)
     sb = np.einsum('gij,gmj->gmi', stress, b_lab)

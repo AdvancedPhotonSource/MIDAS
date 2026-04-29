@@ -4,13 +4,14 @@ Provides Voigt-Mandel tensor conversions, Hooke's law with single-crystal
 stiffness, orientation/misorientation math, and mechanical equilibrium
 constraints for polycrystalline stress analysis.
 
-As of 0.5.0, `orientation` accepts torch tensors transparently and
-returns torch tensors on the input's device/dtype. Existing NumPy
-callers see no API change. See `tests/test_orientation_torch.py` for
-the parity contract.
+As of 0.6.0, the entire public API (orientation, frames, tensor,
+equilibrium constraints, materials, plasticity, elastic_inverse) accepts
+torch.Tensor inputs transparently and returns torch tensors on the
+input's device/dtype. Existing NumPy callers see no API change. See
+the `*_torch.py` test files for per-module parity contracts.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 # --- Tensor / Voigt ---
 from .tensor import (

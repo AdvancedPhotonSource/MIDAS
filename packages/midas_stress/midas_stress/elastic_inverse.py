@@ -59,9 +59,14 @@ import math
 from typing import Optional
 
 import numpy as np
+import torch
 
 from .tensor import tensor_to_voigt, rotation_voigt_mandel
 from .equilibrium import d0_correction_strain_level, effective_weights
+
+
+def _is_torch(*args) -> bool:
+    return any(isinstance(a, torch.Tensor) for a in args)
 
 
 _SQRT2 = math.sqrt(2.0)
@@ -305,21 +310,23 @@ def symmetry_parameterisation(symmetry: str) -> tuple[list[str], np.ndarray]:
     return _SYMMETRY_DISPATCH[key]()
 
 
-def stiffness_from_cij(cij: np.ndarray | dict, symmetry: str) -> np.ndarray:
+def stiffness_from_cij(cij, symmetry: str):
     """Reconstruct the 6x6 Mandel stiffness from independent constants.
 
     Parameters
     ----------
-    cij : ndarray (N_c,) or dict
+    cij : ndarray (N_c,), torch.Tensor (N_c,), or dict
         Independent-constant vector or a dict keyed by constant name
-        (``"C11"`` etc.).
+        (``"C11"`` etc.). When given a torch.Tensor the result is also
+        torch (so this function is differentiable through the cij vector).
     symmetry : str
 
     Returns
     -------
-    ndarray (6, 6) in Mandel notation.
+    (6, 6) ndarray (NumPy) or torch.Tensor (torch) in Mandel notation.
     """
     names, P = symmetry_parameterisation(symmetry)
+    is_torch = isinstance(cij, torch.Tensor)
     if isinstance(cij, dict):
         missing = [n for n in names if n not in cij]
         if missing:
@@ -327,7 +334,23 @@ def stiffness_from_cij(cij: np.ndarray | dict, symmetry: str) -> np.ndarray:
                 f"Missing constants for {symmetry}: {missing}. "
                 f"Required: {names}"
             )
-        vec = np.array([cij[n] for n in names], dtype=np.float64)
+        is_torch = any(isinstance(cij[n], torch.Tensor) for n in names)
+        if is_torch:
+            ref = next(cij[n] for n in names if isinstance(cij[n], torch.Tensor))
+            vec = torch.stack([
+                cij[n] if isinstance(cij[n], torch.Tensor)
+                else torch.tensor(cij[n], dtype=ref.dtype, device=ref.device)
+                for n in names
+            ])
+        else:
+            vec = np.array([cij[n] for n in names], dtype=np.float64)
+    elif is_torch:
+        vec = cij
+        if vec.shape != (len(names),):
+            raise ValueError(
+                f"Expected cij of shape ({len(names)},) for {symmetry}; "
+                f"got {tuple(vec.shape)}"
+            )
     else:
         vec = np.asarray(cij, dtype=np.float64)
         if vec.shape != (len(names),):
@@ -335,6 +358,9 @@ def stiffness_from_cij(cij: np.ndarray | dict, symmetry: str) -> np.ndarray:
                 f"Expected cij of shape ({len(names)},) for {symmetry}; "
                 f"got {vec.shape}"
             )
+    if is_torch:
+        P_t = torch.as_tensor(P, dtype=vec.dtype, device=vec.device)
+        return torch.einsum("k,kij->ij", vec, P_t)
     return np.einsum("k,kij->ij", vec, P)
 
 
@@ -342,12 +368,7 @@ def stiffness_from_cij(cij: np.ndarray | dict, symmetry: str) -> np.ndarray:
 #  Stage matrix construction
 # -------------------------------------------------------------------
 
-def build_stage_matrix(
-    orientations: np.ndarray,
-    strains_lab: np.ndarray,
-    weights: np.ndarray,
-    P_stack: np.ndarray,
-) -> np.ndarray:
+def build_stage_matrix(orientations, strains_lab, weights, P_stack):
     """Build the Hill-method stage design matrix :math:`\\mathbf{A}^{(i)}`.
 
     Column ``k`` of the returned matrix is
@@ -374,6 +395,8 @@ def build_stage_matrix(
     -------
     A : ndarray (6, N_c)
     """
+    if _is_torch(orientations, strains_lab, weights, P_stack):
+        return _build_stage_matrix_torch(orientations, strains_lab, weights, P_stack)
     M = rotation_voigt_mandel(orientations)      # (N, 6, 6) lab->grain
     Mt = np.swapaxes(M, -1, -2)                  # (N, 6, 6) grain->lab
     eps_voigt = tensor_to_voigt(strains_lab)     # (N, 6) lab Mandel
@@ -389,22 +412,50 @@ def build_stage_matrix(
     return A
 
 
-def _aggregate_basis_rotated(
-    orientations: np.ndarray,
-    weights: np.ndarray,
-    P_stack: np.ndarray,
-) -> np.ndarray:
+def _build_stage_matrix_torch(orientations, strains_lab, weights, P_stack):
+    """Torch path for build_stage_matrix."""
+    ref = next(x for x in (orientations, strains_lab, weights, P_stack)
+               if isinstance(x, torch.Tensor))
+    dtype, device = ref.dtype, ref.device
+    if not isinstance(orientations, torch.Tensor):
+        orientations = torch.as_tensor(orientations, dtype=dtype, device=device)
+    if not isinstance(strains_lab, torch.Tensor):
+        strains_lab = torch.as_tensor(strains_lab, dtype=dtype, device=device)
+    if not isinstance(weights, torch.Tensor):
+        weights = torch.as_tensor(weights, dtype=dtype, device=device)
+    if not isinstance(P_stack, torch.Tensor):
+        P_stack = torch.as_tensor(P_stack, dtype=dtype, device=device)
+
+    M = rotation_voigt_mandel(orientations)
+    Mt = M.transpose(-1, -2)
+    eps_voigt = tensor_to_voigt(strains_lab)
+    eps_grain = torch.einsum("nij,nj->ni", M, eps_voigt)
+    sigma_grain = torch.einsum("kij,nj->nki", P_stack, eps_grain)
+    sigma_lab = torch.einsum("nij,nkj->nki", Mt, sigma_grain)
+    return torch.einsum("n,nki->ik", weights, sigma_lab)
+
+
+def _aggregate_basis_rotated(orientations, weights, P_stack):
     """Volume-weighted lab-frame basis tensors
     :math:`\\bar{P}_k = \\sum_g w_g\\,\\mathfrak{U}_g^{\\top} P_k \\mathfrak{U}_g`.
-
-    Returns
-    -------
-    Pbar : ndarray (N_c, 6, 6)
-        One matrix per basis element, in Mandel form.
     """
+    if _is_torch(orientations, weights, P_stack):
+        ref = next(x for x in (orientations, weights, P_stack)
+                   if isinstance(x, torch.Tensor))
+        dtype, device = ref.dtype, ref.device
+        if not isinstance(orientations, torch.Tensor):
+            orientations = torch.as_tensor(orientations, dtype=dtype, device=device)
+        if not isinstance(weights, torch.Tensor):
+            weights = torch.as_tensor(weights, dtype=dtype, device=device)
+        if not isinstance(P_stack, torch.Tensor):
+            P_stack = torch.as_tensor(P_stack, dtype=dtype, device=device)
+        M = rotation_voigt_mandel(orientations)
+        Mt = M.transpose(-1, -2)
+        PM = torch.einsum("kij,njm->nkim", P_stack, M)
+        P_lab = torch.einsum("nij,nkjm->nkim", Mt, PM)
+        return torch.einsum("n,nkij->kij", weights, P_lab)
     M = rotation_voigt_mandel(orientations)      # (N, 6, 6) lab->grain
     Mt = np.swapaxes(M, -1, -2)                  # (N, 6, 6) grain->lab
-    # Compute Mt @ P_k @ M per grain and average: P_lab_g,k = Mt_g P_k M_g.
     PM = np.einsum("kij,njm->nkim", P_stack, M)          # (N, Nc, 6, 6)
     P_lab = np.einsum("nij,nkjm->nkim", Mt, PM)          # (N, Nc, 6, 6)
     return np.einsum("n,nkij->kij", weights, P_lab)      # (Nc, 6, 6)
@@ -441,6 +492,10 @@ def build_stage_matrix_voigt(
     """
     Pbar = _aggregate_basis_rotated(orientations, weights, P_stack)   # (Nc,6,6)
     eps_v = tensor_to_voigt(mean_strain_lab)                          # (6,)
+    if isinstance(Pbar, torch.Tensor):
+        if not isinstance(eps_v, torch.Tensor):
+            eps_v = torch.as_tensor(eps_v, dtype=Pbar.dtype, device=Pbar.device)
+        return torch.einsum("kij,j->ik", Pbar, eps_v)
     return np.einsum("kij,j->ik", Pbar, eps_v)                        # (6, Nc)
 
 
@@ -477,6 +532,10 @@ def build_stage_matrix_reuss(
     """
     Pbar = _aggregate_basis_rotated(orientations, weights, P_stack)   # (Nc,6,6)
     sig_v = tensor_to_voigt(applied_stress)                           # (6,)
+    if isinstance(Pbar, torch.Tensor):
+        if not isinstance(sig_v, torch.Tensor):
+            sig_v = torch.as_tensor(sig_v, dtype=Pbar.dtype, device=Pbar.device)
+        return torch.einsum("kij,j->ik", Pbar, sig_v)
     return np.einsum("kij,j->ik", Pbar, sig_v)                        # (6, Nc)
 
 

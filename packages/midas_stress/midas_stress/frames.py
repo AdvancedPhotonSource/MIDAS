@@ -20,11 +20,16 @@ Sample frame:
 
 Reference: Park, J.-S., matlab_tools/hedm (2024),
 https://github.com/junspark/matlab_tools
+
+As of 0.6.0, all functions accept torch.Tensor inputs transparently and
+return torch tensors when given torch input — same dispatch pattern as
+`orientation.py`. Existing NumPy callers see no API change.
 """
 
 import math
 
 import numpy as np
+import torch
 
 
 # -------------------------------------------------------------------
@@ -43,14 +48,30 @@ R_MIDAS_TO_APS = np.array([
 R_APS_TO_MIDAS = R_MIDAS_TO_APS.T.copy()
 
 
-def lab_to_sample_rotation(omega_deg: float, frame: str = "midas") -> np.ndarray:
+# -------------------------------------------------------------------
+#  Backend dispatch helpers (torch / numpy)
+# -------------------------------------------------------------------
+
+def _is_torch(*args) -> bool:
+    return any(isinstance(a, torch.Tensor) for a in args)
+
+
+def _r_midas_to_aps(dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+    return torch.tensor(R_MIDAS_TO_APS, dtype=dtype, device=device)
+
+
+def _r_aps_to_midas(dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+    return torch.tensor(R_APS_TO_MIDAS, dtype=dtype, device=device)
+
+
+def lab_to_sample_rotation(omega_deg, frame: str = "midas"):
     """Build the lab-to-sample rotation matrix for a given omega angle.
 
     When omega = 0, the lab and sample frames coincide.
 
     Parameters
     ----------
-    omega_deg : float
+    omega_deg : float or torch.Tensor (0-d)
         Omega angle in degrees.
     frame : str
         ``"midas"`` or ``"aps"`` — which lab frame convention to use.
@@ -59,8 +80,10 @@ def lab_to_sample_rotation(omega_deg: float, frame: str = "midas") -> np.ndarray
 
     Returns
     -------
-    ndarray (3, 3) — rotation matrix such that v_sample = R @ v_lab.
+    (3, 3) ndarray (NumPy backend) or torch.Tensor (torch backend).
     """
+    if _is_torch(omega_deg):
+        return _lab_to_sample_rotation_torch(omega_deg, frame)
     c = math.cos(math.radians(omega_deg))
     s = math.sin(math.radians(omega_deg))
 
@@ -82,35 +105,66 @@ def lab_to_sample_rotation(omega_deg: float, frame: str = "midas") -> np.ndarray
         raise ValueError(f"Unknown frame '{frame}'. Use 'midas' or 'aps'.")
 
 
+def _lab_to_sample_rotation_torch(omega_deg, frame: str) -> torch.Tensor:
+    """Torch path for lab_to_sample_rotation."""
+    omega = omega_deg if isinstance(omega_deg, torch.Tensor) else torch.tensor(omega_deg)
+    omega_rad = omega * (math.pi / 180.0)
+    c = torch.cos(omega_rad)
+    s = torch.sin(omega_rad)
+    zero = torch.zeros_like(c)
+    one = torch.ones_like(c)
+    if frame.lower() == "aps":
+        # Rotation about Y (up in APS)
+        return torch.stack([
+            torch.stack([c, zero, -s], dim=-1),
+            torch.stack([zero, one, zero], dim=-1),
+            torch.stack([s, zero, c], dim=-1),
+        ], dim=-2)
+    if frame.lower() in ("midas", "esrf"):
+        # Rotation about Z (up in MIDAS)
+        return torch.stack([
+            torch.stack([c, s, zero], dim=-1),
+            torch.stack([-s, c, zero], dim=-1),
+            torch.stack([zero, zero, one], dim=-1),
+        ], dim=-2)
+    raise ValueError(f"Unknown frame '{frame}'. Use 'midas' or 'aps'.")
+
+
 # -------------------------------------------------------------------
 #  Convert vectors (positions, etc.)
 # -------------------------------------------------------------------
 
-def vector_midas_to_aps(v: np.ndarray) -> np.ndarray:
+def vector_midas_to_aps(v):
     """Convert vector(s) from MIDAS to APS frame.
 
     Parameters
     ----------
-    v : ndarray (..., 3)
+    v : ndarray or torch.Tensor (..., 3)
 
     Returns
     -------
-    ndarray (..., 3)
+    Same backend as input, shape (..., 3).
     """
+    if _is_torch(v):
+        R = _r_midas_to_aps(v.dtype, v.device)
+        return (R @ v.unsqueeze(-1)).squeeze(-1)
     return (R_MIDAS_TO_APS @ v[..., None]).squeeze(-1)
 
 
-def vector_aps_to_midas(v: np.ndarray) -> np.ndarray:
+def vector_aps_to_midas(v):
     """Convert vector(s) from APS to MIDAS frame.
 
     Parameters
     ----------
-    v : ndarray (..., 3)
+    v : ndarray or torch.Tensor (..., 3)
 
     Returns
     -------
-    ndarray (..., 3)
+    Same backend as input, shape (..., 3).
     """
+    if _is_torch(v):
+        R = _r_aps_to_midas(v.dtype, v.device)
+        return (R @ v.unsqueeze(-1)).squeeze(-1)
     return (R_APS_TO_MIDAS @ v[..., None]).squeeze(-1)
 
 
@@ -118,7 +172,7 @@ def vector_aps_to_midas(v: np.ndarray) -> np.ndarray:
 #  Convert orientation matrices
 # -------------------------------------------------------------------
 
-def orient_midas_to_aps(U: np.ndarray) -> np.ndarray:
+def orient_midas_to_aps(U):
     """Convert orientation matrix from MIDAS to APS frame.
 
     If U_midas takes crystal -> MIDAS lab, then
@@ -126,26 +180,22 @@ def orient_midas_to_aps(U: np.ndarray) -> np.ndarray:
 
     Parameters
     ----------
-    U : ndarray (..., 3, 3)
-
-    Returns
-    -------
-    ndarray (..., 3, 3)
+    U : ndarray or torch.Tensor (..., 3, 3)
     """
+    if _is_torch(U):
+        return _r_midas_to_aps(U.dtype, U.device) @ U
     return R_MIDAS_TO_APS @ U
 
 
-def orient_aps_to_midas(U: np.ndarray) -> np.ndarray:
+def orient_aps_to_midas(U):
     """Convert orientation matrix from APS to MIDAS frame.
 
     Parameters
     ----------
-    U : ndarray (..., 3, 3)
-
-    Returns
-    -------
-    ndarray (..., 3, 3)
+    U : ndarray or torch.Tensor (..., 3, 3)
     """
+    if _is_torch(U):
+        return _r_aps_to_midas(U.dtype, U.device) @ U
     return R_APS_TO_MIDAS @ U
 
 
@@ -153,56 +203,48 @@ def orient_aps_to_midas(U: np.ndarray) -> np.ndarray:
 #  Convert symmetric tensors (strain, stress)
 # -------------------------------------------------------------------
 
-def tensor_midas_to_aps(T: np.ndarray) -> np.ndarray:
+def tensor_midas_to_aps(T):
     """Convert symmetric 3x3 tensor(s) from MIDAS to APS frame.
 
-    Applies similarity transform: T_aps = R @ T_midas @ R^T
+    Applies similarity transform: T_aps = R @ T_midas @ R^T.
 
     Parameters
     ----------
-    T : ndarray (..., 3, 3)
-
-    Returns
-    -------
-    ndarray (..., 3, 3)
+    T : ndarray or torch.Tensor (..., 3, 3)
     """
+    if _is_torch(T):
+        R = _r_midas_to_aps(T.dtype, T.device)
+        return R @ T @ R.transpose(-1, -2)
     return R_MIDAS_TO_APS @ T @ R_MIDAS_TO_APS.T
 
 
-def tensor_aps_to_midas(T: np.ndarray) -> np.ndarray:
+def tensor_aps_to_midas(T):
     """Convert symmetric 3x3 tensor(s) from APS to MIDAS frame.
 
     Parameters
     ----------
-    T : ndarray (..., 3, 3)
-
-    Returns
-    -------
-    ndarray (..., 3, 3)
+    T : ndarray or torch.Tensor (..., 3, 3)
     """
+    if _is_torch(T):
+        R = _r_aps_to_midas(T.dtype, T.device)
+        return R @ T @ R.transpose(-1, -2)
     return R_APS_TO_MIDAS @ T @ R_APS_TO_MIDAS.T
 
 
-def tensor_lab_to_sample(
-    T: np.ndarray,
-    omega_deg: float,
-    frame: str = "midas",
-) -> np.ndarray:
+def tensor_lab_to_sample(T, omega_deg, frame: str = "midas"):
     """Convert symmetric tensor(s) from lab to sample frame.
 
     Parameters
     ----------
-    T : ndarray (..., 3, 3)
-    omega_deg : float
-        Omega angle in degrees.
-    frame : str
-        ``"midas"`` or ``"aps"``.
-
-    Returns
-    -------
-    ndarray (..., 3, 3)
+    T : ndarray or torch.Tensor (..., 3, 3)
+    omega_deg : float or torch.Tensor (0-d)
+    frame : str — ``"midas"`` or ``"aps"``.
     """
     R = lab_to_sample_rotation(omega_deg, frame)
+    if _is_torch(T, omega_deg):
+        if not isinstance(R, torch.Tensor):
+            R = torch.as_tensor(R, dtype=T.dtype, device=T.device)
+        return R @ T @ R.transpose(-1, -2)
     return R @ T @ R.T
 
 
@@ -211,9 +253,9 @@ def tensor_lab_to_sample(
 # -------------------------------------------------------------------
 
 def grains_midas_to_sample(
-    orientations: np.ndarray,
-    positions: np.ndarray,
-    strains: np.ndarray,
+    orientations,
+    positions,
+    strains,
     omega_deg: float = 0.0,
     target_frame: str = "aps",
 ) -> dict:
@@ -243,24 +285,37 @@ def grains_midas_to_sample(
         'positions': ndarray (N, 3) in sample frame
         'strains': ndarray (N, 3, 3) in sample frame
     """
-    if target_frame.lower() == "aps":
-        R_frame = R_MIDAS_TO_APS.copy()
-    elif target_frame.lower() in ("midas", "esrf"):
-        R_frame = np.eye(3)
+    is_torch = _is_torch(orientations, positions, strains, omega_deg)
+    if is_torch:
+        ref = orientations if isinstance(orientations, torch.Tensor) else (
+            positions if isinstance(positions, torch.Tensor) else strains
+        )
+        if target_frame.lower() == "aps":
+            R_frame = _r_midas_to_aps(ref.dtype, ref.device)
+        elif target_frame.lower() in ("midas", "esrf"):
+            R_frame = torch.eye(3, dtype=ref.dtype, device=ref.device)
+        else:
+            raise ValueError(f"Unknown target_frame '{target_frame}'.")
+        R_lab2sam = lab_to_sample_rotation(omega_deg, target_frame)
+        if not isinstance(R_lab2sam, torch.Tensor):
+            R_lab2sam = torch.as_tensor(R_lab2sam, dtype=ref.dtype, device=ref.device)
+        R_total = R_lab2sam @ R_frame
+
+        orient_out = R_total @ orientations
+        pos_out = (R_total @ positions.unsqueeze(-1)).squeeze(-1)
+        strain_out = R_total @ strains @ R_total.transpose(-1, -2)
     else:
-        raise ValueError(f"Unknown target_frame '{target_frame}'.")
-
-    R_lab2sam = lab_to_sample_rotation(omega_deg, target_frame)
-    R_total = R_lab2sam @ R_frame
-
-    # Orientations: U_sample = R_total @ U_midas
-    orient_out = R_total @ orientations
-
-    # Positions: p_sample = R_total @ p_midas
-    pos_out = (R_total @ positions[..., None]).squeeze(-1)
-
-    # Strains: eps_sample = R_total @ eps_midas @ R_total^T
-    strain_out = R_total @ strains @ R_total.T
+        if target_frame.lower() == "aps":
+            R_frame = R_MIDAS_TO_APS.copy()
+        elif target_frame.lower() in ("midas", "esrf"):
+            R_frame = np.eye(3)
+        else:
+            raise ValueError(f"Unknown target_frame '{target_frame}'.")
+        R_lab2sam = lab_to_sample_rotation(omega_deg, target_frame)
+        R_total = R_lab2sam @ R_frame
+        orient_out = R_total @ orientations
+        pos_out = (R_total @ positions[..., None]).squeeze(-1)
+        strain_out = R_total @ strains @ R_total.T
 
     return {
         'orientations': orient_out,

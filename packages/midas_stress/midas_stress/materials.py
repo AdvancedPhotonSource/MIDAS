@@ -1,23 +1,54 @@
 """Built-in single-crystal stiffness matrices for common materials.
 
 All values in GPa, Voigt-Mandel notation.
+
+As of 0.6.0, the stiffness builders accept torch.Tensor scalars for the
+elastic constants (returning torch tensors) or accept an explicit
+`dtype=torch.<dtype>` / `device=...` kwarg to opt into torch output.
 """
 
 import numpy as np
+import torch
 
 
-def cubic_stiffness(C11: float, C12: float, C44: float) -> np.ndarray:
+def _is_torch(*args) -> bool:
+    return any(isinstance(a, torch.Tensor) for a in args)
+
+
+def cubic_stiffness(
+    C11, C12, C44,
+    dtype=None,
+    device=None,
+):
     """Build 6x6 stiffness matrix for cubic crystal in Mandel notation.
 
     Parameters
     ----------
-    C11, C12, C44 : float
+    C11, C12, C44 : float or torch.Tensor (0-d)
         Independent elastic constants in GPa.
+    dtype : torch.dtype, optional
+        Set to a torch dtype (e.g. ``torch.float64``) to return a torch
+        tensor on the requested device. If omitted (or NumPy dtype),
+        returns a NumPy array unless any input is a torch.Tensor.
+    device : torch.device or str, optional
+        Target device when returning a torch tensor.
 
     Returns
     -------
-    ndarray (6, 6)
+    (6, 6) ndarray (NumPy backend) or torch.Tensor (torch backend).
     """
+    if _is_torch(C11, C12, C44) or isinstance(dtype, torch.dtype):
+        if dtype is None:
+            ref = next(x for x in (C11, C12, C44) if isinstance(x, torch.Tensor))
+            dtype = ref.dtype
+            device = device if device is not None else ref.device
+        elif device is None:
+            device = torch.device("cpu")
+        C = torch.zeros(6, 6, dtype=dtype, device=device)
+        C[0, 0] = C[1, 1] = C[2, 2] = C11
+        C[0, 1] = C[0, 2] = C[1, 0] = C[1, 2] = C[2, 0] = C[2, 1] = C12
+        C[3, 3] = C[4, 4] = C[5, 5] = 2.0 * C44
+        return C
     C = np.zeros((6, 6))
     C[0, 0] = C[1, 1] = C[2, 2] = C11
     C[0, 1] = C[0, 2] = C[1, 0] = C[1, 2] = C[2, 0] = C[2, 1] = C12
@@ -27,35 +58,38 @@ def cubic_stiffness(C11: float, C12: float, C44: float) -> np.ndarray:
 
 
 def hexagonal_stiffness(
-    C11: float, C12: float, C13: float, C33: float, C44: float,
-) -> np.ndarray:
+    C11, C12, C13, C33, C44,
+    dtype=None,
+    device=None,
+):
     """Build 6x6 stiffness matrix for hexagonal crystal in Mandel notation.
 
     Assumes the hexagonal c-axis is aligned with the crystal-frame
-    ``z`` direction, so the basal plane is ``xy``.  Mandel ordering
-    from ``tensor.py`` is ``[xx, yy, zz, xy, xz, yz]``, so the
-    in-basal shear coupling (``C66 = (C11-C12)/2``) lives at Mandel
-    index (3,3) and the out-of-basal couplings (``C44``) live at
-    (4,4) and (5,5).
-
-    Parameters
-    ----------
-    C11, C12, C13, C33, C44 : float
-        Independent elastic constants in GPa.
-
-    Returns
-    -------
-    ndarray (6, 6)
+    ``z`` direction, so the basal plane is ``xy``. See module docstring
+    for the dispatch rules between NumPy and torch.
     """
+    if _is_torch(C11, C12, C13, C33, C44) or isinstance(dtype, torch.dtype):
+        if dtype is None:
+            ref = next(x for x in (C11, C12, C13, C33, C44) if isinstance(x, torch.Tensor))
+            dtype = ref.dtype
+            device = device if device is not None else ref.device
+        elif device is None:
+            device = torch.device("cpu")
+        C = torch.zeros(6, 6, dtype=dtype, device=device)
+        C[0, 0] = C[1, 1] = C11
+        C[2, 2] = C33
+        C[0, 1] = C[1, 0] = C12
+        C[0, 2] = C[2, 0] = C[1, 2] = C[2, 1] = C13
+        C[3, 3] = C11 - C12
+        C[4, 4] = C[5, 5] = 2.0 * C44
+        return C
     C = np.zeros((6, 6))
     C[0, 0] = C[1, 1] = C11
     C[2, 2] = C33
     C[0, 1] = C[1, 0] = C12
     C[0, 2] = C[2, 0] = C[1, 2] = C[2, 1] = C13
     # Mandel shear: 2 * engineering shear coupling.
-    # (3,3) is xy-xy → C66 coupling = (C11-C12)/2 engineering → (C11-C12) Mandel.
     C[3, 3] = C11 - C12
-    # (4,4) is xz-xz and (5,5) is yz-yz, both governed by C44.
     C[4, 4] = C[5, 5] = 2.0 * C44
     return C
 
@@ -75,17 +109,21 @@ STIFFNESS_LIBRARY = {
 }
 
 
-def get_stiffness(material: str) -> np.ndarray:
+def get_stiffness(material: str, dtype=None, device=None):
     """Get stiffness matrix for a material from the built-in library.
 
     Parameters
     ----------
     material : str
         Material name (e.g., "Au", "Cu", "Fe", "Ti").
+    dtype : torch.dtype, optional
+        Set to a torch dtype to return a torch tensor.
+    device : torch.device or str, optional
+        Target device when returning a torch tensor.
 
     Returns
     -------
-    ndarray (6, 6) stiffness in GPa, Voigt-Mandel notation.
+    (6, 6) ndarray (NumPy default) or torch.Tensor when ``dtype`` is a torch dtype.
     """
     if material not in STIFFNESS_LIBRARY:
         raise ValueError(
@@ -94,10 +132,12 @@ def get_stiffness(material: str) -> np.ndarray:
         )
     p = STIFFNESS_LIBRARY[material]
     if p["symmetry"] == "cubic":
-        return cubic_stiffness(p["C11"], p["C12"], p["C44"])
+        return cubic_stiffness(p["C11"], p["C12"], p["C44"],
+                                dtype=dtype, device=device)
     elif p["symmetry"] == "hexagonal":
         return hexagonal_stiffness(p["C11"], p["C12"], p["C13"],
-                                   p["C33"], p["C44"])
+                                   p["C33"], p["C44"],
+                                   dtype=dtype, device=device)
     raise ValueError(f"Unsupported symmetry '{p['symmetry']}' for {material}")
 
 
@@ -158,6 +198,11 @@ def d0_sensitivity(material: str = None, stiffness: np.ndarray = None,
         C = cubic_stiffness(C11, C12, 0)  # C44 irrelevant for {I}
     else:
         raise ValueError("Provide material, stiffness, or C11+C12.")
+
+    # This diagnostic returns a NumPy / Python-scalar dict regardless of
+    # the input backend; if a torch stiffness slipped in, convert.
+    if isinstance(C, torch.Tensor):
+        C = C.detach().cpu().numpy()
 
     # Isotropic strain in Mandel notation: {I} = [1, 1, 1, 0, 0, 0]
     I_voigt = np.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
