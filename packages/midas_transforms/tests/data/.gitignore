@@ -1,0 +1,2 @@
+# C-binary regression goldens are large (~550 MB); generated locally and not committed.
+c_goldens/

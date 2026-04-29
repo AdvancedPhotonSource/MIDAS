@@ -896,6 +896,7 @@ def process_layer(layer_nr: int, top_res_dir: str, ps_fn: str, data_fn: str, num
                  resume_from_stage: str = '', generate_h5: bool = False, useGPU: int = 0,
                  useTorchIndexer: int = 0,
                  peakFitGPU: int = 0,
+                 useTorchTransforms: int = 0,
                  run_sr: int = 0, srfac: int = 8, sr_config_path: str = 'auto',
                  save_sr_patches: int = 0, save_frame_good_coords: int = 0) -> None:
     """Process a single layer.
@@ -1140,7 +1141,10 @@ def process_layer(layer_nr: int, top_res_dir: str, ps_fn: str, data_fn: str, num
             try:
                 f_merge_out = f'{result_dir}/midas_log/merge_overlaps_out.csv'
                 f_merge_err = f'{result_dir}/midas_log/merge_overlaps_err.csv'
-                cmd = f"{os.path.join(bin_directory, 'MergeOverlappingPeaksAllZarr')} {outFStem}"
+                if useTorchTransforms:
+                    cmd = f"midas-merge-peaks {outFStem}"
+                else:
+                    cmd = f"{os.path.join(bin_directory, 'MergeOverlappingPeaksAllZarr')} {outFStem}"
                 safely_run_command(cmd, result_dir, f_merge_out, f_merge_err, task_name="Peak merging")
                 ph5.mark('merge_overlaps')
             except Exception as e:
@@ -1154,7 +1158,10 @@ def process_layer(layer_nr: int, top_res_dir: str, ps_fn: str, data_fn: str, num
             try:
                 f_radius_out = f'{result_dir}/midas_log/calc_radius_out.csv'
                 f_radius_err = f'{result_dir}/midas_log/calc_radius_err.csv'
-                cmd = f"{os.path.join(bin_directory, 'CalcRadiusAllZarr')} {outFStem}"
+                if useTorchTransforms:
+                    cmd = f"midas-calc-radius {outFStem}"
+                else:
+                    cmd = f"{os.path.join(bin_directory, 'CalcRadiusAllZarr')} {outFStem}"
                 safely_run_command(cmd, result_dir, f_radius_out, f_radius_err, task_name="Radius calculation")
                 ph5.mark('calc_radius')
             except Exception as e:
@@ -1168,7 +1175,10 @@ def process_layer(layer_nr: int, top_res_dir: str, ps_fn: str, data_fn: str, num
             try:
                 f_setup_out = f'{result_dir}/midas_log/fit_setup_out.csv'
                 f_setup_err = f'{result_dir}/midas_log/fit_setup_err.csv'
-                cmd = f"{os.path.join(bin_directory, 'FitSetupZarr')} {outFStem}"
+                if useTorchTransforms:
+                    cmd = f"midas-fit-setup {outFStem}"
+                else:
+                    cmd = f"{os.path.join(bin_directory, 'FitSetupZarr')} {outFStem}"
                 safely_run_command(cmd, result_dir, f_setup_out, f_setup_err, task_name="Data transformation")
                 ph5.mark('data_transform')
             except Exception as e:
@@ -1223,7 +1233,10 @@ def process_layer(layer_nr: int, top_res_dir: str, ps_fn: str, data_fn: str, num
             try:
                 f_bin_out = f'{result_dir}/midas_log/binning_out.csv'
                 f_bin_err = f'{result_dir}/midas_log/binning_err.csv'
-                cmd = f"{os.path.join(bin_directory, 'SaveBinData')}"
+                if useTorchTransforms:
+                    cmd = f"midas-bin-data --result-folder {result_dir}"
+                else:
+                    cmd = f"{os.path.join(bin_directory, 'SaveBinData')}"
                 safely_run_command(cmd, result_dir, f_bin_out, f_bin_err, task_name="Data binning")
                 ph5.mark('binning')
             except Exception as e:
@@ -2040,6 +2053,12 @@ def main():
     parser.add_argument('-peakFitGPU', type=int, required=False, default=0,
                         help='Use GPU/PyTorch peak fitter (peakfit_torch from midas-peakfit) instead of '
                              'the OMP C tool PeaksFittingOMPZarrRefactor. Default: 0 (use C tool).')
+    parser.add_argument('-useTorchTransforms', type=int, required=False, default=0,
+                        help='Use the pure-Python midas-transforms package for the four in-between stages '
+                             '(merge_overlaps, calc_radius, data_transform, binning) instead of the C '
+                             'binaries (MergeOverlappingPeaksAllZarr, CalcRadiusAllZarr, FitSetupZarr, '
+                             'SaveBinData). Device/dtype follow the MIDAS_TRANSFORMS_DEVICE / '
+                             'MIDAS_TRANSFORMS_DTYPE environment variables. Default: 0 (use C binaries).')
     parser.add_argument('-generateH5', type=int, required=False, default=0,
                         help='Set to 1 to generate consolidated HDF5 at the end of each layer. Disabled by default.')
     parser.add_argument('-skipValidation', action='store_true',
@@ -2297,6 +2316,7 @@ def main():
                         useGPU=args.useGPU,
                         useTorchIndexer=args.useTorchIndexer,
                         peakFitGPU=args.peakFitGPU,
+                        useTorchTransforms=args.useTorchTransforms,
                         run_sr=run_sr,
                         srfac=srfac,
                         sr_config_path=sr_config_path,
@@ -2349,6 +2369,7 @@ def main():
                         useGPU=args.useGPU,
                         useTorchIndexer=args.useTorchIndexer,
                         peakFitGPU=args.peakFitGPU,
+                        useTorchTransforms=args.useTorchTransforms,
                         run_sr=run_sr,
                         srfac=srfac,
                         sr_config_path=sr_config_path,

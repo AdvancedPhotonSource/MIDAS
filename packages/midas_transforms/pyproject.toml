@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midas-transforms"
+version = "0.1.0.dev0"
+description = "Pure-Python/PyTorch FF-HEDM transforms (drop-in for MergeOverlappingPeaksAllZarr / CalcRadiusAllZarr / FitSetupZarr / SaveBinData)"
+readme = "README.md"
+license = "BSD-3-Clause"
+requires-python = ">=3.9"
+authors = [
+    {name = "Hemant Sharma", email = "hsharma@anl.gov"},
+]
+keywords = [
+    "MIDAS", "HEDM", "differentiable", "PyTorch", "far-field", "diffraction",
+    "crystallography", "polycrystal", "grain", "geometry-correction",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy>=1.22",
+    "torch>=2.0",
+    "zarr>=2.18,<3.0",
+    "numcodecs>=0.12",
+    "midas-calibrate>=0.2.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov", "pytest-benchmark"]
+
+[project.urls]
+Homepage = "https://github.com/marinerhemant/MIDAS"
+Documentation = "https://github.com/marinerhemant/MIDAS/tree/master/packages/midas_transforms"
+Issues = "https://github.com/marinerhemant/MIDAS/issues"
+
+[project.scripts]
+midas-transforms = "midas_transforms.cli:main"
+midas-merge-peaks = "midas_transforms.cli:merge_main"
+midas-calc-radius = "midas_transforms.cli:radius_main"
+midas-fit-setup = "midas_transforms.cli:fit_setup_main"
+midas-bin-data = "midas_transforms.cli:bin_data_main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["midas_transforms*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: full-pipeline regression tests (require reference dataset)",
+    "gpu: tests that require CUDA",
+    "mps: tests that require Apple MPS",
+    "bench: performance benchmark tests",
+]

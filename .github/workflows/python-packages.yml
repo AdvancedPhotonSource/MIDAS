@@ -31,6 +31,7 @@ jobs:
           - midas_calibrate
           - midas_diffract
           - midas_index
+          - midas_transforms
 
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +61,17 @@ jobs:
           pip install -e packages/midas_stress
           pip install -e packages/midas_diffract
 
+      # midas_transforms depends on midas_calibrate (>=0.2.1), which itself
+      # depends on midas_hkls / midas_integrate / midas_peakfit. Install the
+      # whole chain editably so the resolver finds them locally.
+      - name: Install in-repo sibling MIDAS packages (midas_transforms only)
+        if: matrix.package == 'midas_transforms'
+        run: |
+          pip install -e packages/midas_hkls
+          pip install -e packages/midas_integrate
+          pip install -e packages/midas_peakfit
+          pip install -e packages/midas_calibrate
+
       - name: Install ${{ matrix.package }} (editable, with dev extras)
         run: pip install -e "packages/${{ matrix.package }}[dev]"
 
@@ -81,6 +93,7 @@ jobs:
   #   midas-calibrate-v*  → midas_calibrate
   #   midas-diffract-v*   → midas_diffract
   #   midas-index-v*      → midas_index
+  #   midas-transforms-v* → midas_transforms
   #
   # Release tags without one of these prefixes are ignored (no-op build).
   build:
@@ -122,6 +135,9 @@ jobs:
           elif [[ "$TAG" == midas-index-v* ]]; then
             echo "package=midas_index" >> "$GITHUB_OUTPUT"
             echo "pypi_name=midas-index" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == midas-transforms-v* ]]; then
+            echo "package=midas_transforms" >> "$GITHUB_OUTPUT"
+            echo "pypi_name=midas-transforms" >> "$GITHUB_OUTPUT"
           else
             echo "Tag $TAG does not match any known package prefix; skipping."
             echo "package=" >> "$GITHUB_OUTPUT"
