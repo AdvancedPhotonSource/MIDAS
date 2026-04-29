@@ -167,11 +167,9 @@ def write_block(
                 else i
             )
             write_seed_record(fd_best, seed, offset)
-            # IndexBestFull.bin: matched_pairs population is the per-seed
-            # responsibility of the matching stage. `SeedResult.matched_ids`
-            # alone is not enough; the pairs (matched_id, delta_omega) come
-            # from the matching kernel. v0.1.0 lands the writer here; the
-            # producer wires up in P5.
+            if seed.matched_pairs is not None:
+                pairs_np = seed.matched_pairs.numpy().astype(np.float64)
+                write_full_record(fd_full, pairs_np, offset)
     finally:
         close_output_files(fd_best, fd_full)
 

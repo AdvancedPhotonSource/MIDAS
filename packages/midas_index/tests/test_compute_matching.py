@@ -239,6 +239,106 @@ def test_compare_spots_avg_ia_zero_when_perfect_match():
     assert res.avg_ia[0].item() == pytest.approx(0.0, abs=1e-6)
 
 
+def test_compare_spots_jagged_matches_dense_byte_for_byte():
+    """The jagged strategy chunks N but must produce identical numerics to dense."""
+    rng = np.random.default_rng(0)
+    # Build a non-trivial obs table on ring 1
+    n_obs = 12
+    obs = np.zeros((n_obs, 9), dtype=np.float64)
+    obs[:, 0] = rng.uniform(-50, 50, n_obs)               # y
+    obs[:, 1] = rng.uniform(-50, 50, n_obs)               # z
+    obs[:, 2] = rng.uniform(-30, 30, n_obs)               # omega
+    obs[:, 3] = 30000.0                                    # ring radius
+    obs[:, 4] = np.arange(1, n_obs + 1)                   # spot id
+    obs[:, 5] = 1                                          # ring nr
+    obs[:, 6] = rng.uniform(-30, 30, n_obs)               # eta
+    obs[:, 8] = 0.0                                        # rad_diff
+
+    # Build a bin index (with margin spread) so the matching has work to do.
+    from midas_index.io import build_bin_index
+    bin_data_np, ndata_np = build_bin_index(
+        obs, eta_bin_size=1.0, ome_bin_size=1.0, n_rings=1,
+        margin_eta=10.0, margin_ome=2.0, stepsize_orient=0.5,
+        ring_radii={1: 30000.0},
+    )
+    bin_data = torch.as_tensor(bin_data_np, dtype=torch.int32)
+    bin_ndata = torch.as_tensor(ndata_np, dtype=torch.int32)
+    obs_t = torch.as_tensor(obs, dtype=torch.float64)
+
+    # Build N=20 "theor" tuples that should each find a few matches.
+    N, T = 20, 4
+    theor = torch.zeros((N, T, 14), dtype=torch.float64)
+    for n in range(N):
+        for t in range(T):
+            theor[n, t, 6] = obs[t % n_obs, 2] + 0.05 * (n - 10)   # omega near obs
+            theor[n, t, 9] = 1                                       # ring 1
+            theor[n, t, 10] = obs[t % n_obs, 0]                      # yl_disp
+            theor[n, t, 11] = obs[t % n_obs, 1]                      # zl_disp
+            theor[n, t, 12] = obs[t % n_obs, 6] + 0.05 * (n - 10)   # eta_post
+            theor[n, t, 13] = 0.0                                    # rad_diff
+    valid = torch.ones((N, T), dtype=torch.bool)
+
+    eta_margins = build_eta_margins(
+        ring_radii={1: 30000.0}, margin_eta=10.0, stepsize_orient_deg=0.5,
+        device=torch.device("cpu"), dtype=torch.float64,
+    )
+    ome_margins = build_ome_margins(
+        margin_ome=2.0, stepsize_orient_deg=0.5,
+        device=torch.device("cpu"), dtype=torch.float64,
+    )
+
+    common_kwargs = dict(
+        theor=theor, valid=valid, obs=obs_t,
+        bin_data=bin_data, bin_ndata=bin_ndata,
+        ref_rad=torch.full((N,), 30000.0, dtype=torch.float64),
+        margin_rad=10.0, margin_radial=10.0,
+        eta_margins=eta_margins, ome_margins=ome_margins,
+        eta_bin_size=1.0, ome_bin_size=1.0,
+        n_eta_bins=360, n_ome_bins=360,
+        rings_to_reject=torch.tensor([], dtype=torch.int64),
+        distance=1_000_000.0,
+        pos=torch.zeros((N, 3), dtype=torch.float64),
+    )
+
+    dense = compare_spots(**common_kwargs, strategy="dense")
+    jagged = compare_spots(**common_kwargs, strategy="jagged", chunk_size=5)
+
+    # Byte-for-byte parity across all output fields
+    np.testing.assert_array_equal(dense.n_matches.numpy(), jagged.n_matches.numpy())
+    np.testing.assert_array_equal(
+        dense.matched_obs_id.numpy(), jagged.matched_obs_id.numpy(),
+    )
+    np.testing.assert_array_equal(
+        dense.matched_obs_row.numpy(), jagged.matched_obs_row.numpy(),
+    )
+    np.testing.assert_array_equal(dense.matched.numpy(), jagged.matched.numpy())
+    np.testing.assert_allclose(
+        dense.frac_matches.numpy(), jagged.frac_matches.numpy(), atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        dense.avg_ia.numpy(), jagged.avg_ia.numpy(), atol=1e-12,
+    )
+
+
+def test_compare_spots_strategy_invalid_raises():
+    with pytest.raises(ValueError, match="strategy must be"):
+        compare_spots(
+            theor=torch.zeros((1, 1, 14), dtype=torch.float64),
+            valid=torch.zeros((1, 1), dtype=torch.bool),
+            obs=torch.zeros((1, 9), dtype=torch.float64),
+            bin_data=torch.zeros(0, dtype=torch.int32),
+            bin_ndata=torch.zeros(2, dtype=torch.int32),
+            ref_rad=torch.zeros(1, dtype=torch.float64),
+            margin_rad=1.0, margin_radial=1.0,
+            eta_margins=torch.zeros(500, dtype=torch.float64),
+            ome_margins=torch.zeros(181, dtype=torch.float64),
+            eta_bin_size=1.0, ome_bin_size=1.0,
+            n_eta_bins=360, n_ome_bins=360,
+            rings_to_reject=torch.tensor([], dtype=torch.int64),
+            strategy="bogus",
+        )
+
+
 def test_compare_spots_avg_ia_zero_when_no_matches():
     """No matches -> avg_ia is 0 (no spots contribute)."""
     obs = _make_obs([

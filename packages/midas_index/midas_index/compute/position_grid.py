@@ -97,6 +97,7 @@ def build_position_grid(
     distance: float,                  # detector distance (xi)
     r_sample: float,
     step_size: float,
+    h_beam: float | None = None,      # full beam height; positions with |gc|>h_beam/2 are dropped
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Construct the full per-seed (n, position) grid.
 
@@ -136,24 +137,36 @@ def build_position_grid(
     ys_t = torch.tensor(ys, device=device, dtype=dtype)
     zs_t = torch.tensor(zs, device=device, dtype=dtype)
 
-    n_min, n_max = calc_n_range(
-        xi_t, yi_t, ys_t, seed_y0, r_sample, step_size,
+    # Compute n-range on CPU (B is at most ~10 candidates per seed) so we
+    # don't pay GPU syncs for the `n_counts.sum().item()` size that drives
+    # `torch.arange`. The math is elementwise on tiny tensors — round-tripping
+    # to CPU costs less than the GPU sync would.
+    seed_y0_cpu = seed_y0.detach().to(device="cpu", dtype=dtype, copy=False)
+    seed_z0_cpu = seed_z0.detach().to(device="cpu", dtype=dtype, copy=False)
+    L_cpu = torch.sqrt(distance * distance + seed_y0_cpu ** 2 + seed_z0_cpu ** 2)
+    xi_cpu = distance / L_cpu
+    yi_cpu = seed_y0_cpu / L_cpu
+    ys_cpu = torch.tensor(ys, dtype=dtype)
+    n_min_cpu, n_max_cpu = calc_n_range(
+        xi_cpu, yi_cpu, ys_cpu, seed_y0_cpu, r_sample, step_size,
     )
-    # Broadcast each seed's n-range into an explicit list of (seed_idx, n)
-    n_counts = (n_max - n_min + 1).clamp_min(0)
-    if n_counts.sum().item() == 0:
+    n_counts_cpu = (n_max_cpu - n_min_cpu + 1).clamp_min(0).to(torch.int64)
+    n_total = int(n_counts_cpu.sum().item())   # CPU-only; no GPU sync
+    if n_total == 0:
         return (
             torch.empty((0, 3), device=device, dtype=dtype),
             torch.empty((0,), device=device, dtype=torch.int64),
         )
+
+    n_min = n_min_cpu.to(device=device, non_blocking=True)
+    n_counts = n_counts_cpu.to(device=device, non_blocking=True)
     seed_idx = torch.repeat_interleave(
         torch.arange(seed_y0.numel(), device=device, dtype=torch.int64),
         n_counts,
     )
-    # n values: for seed i, n in [n_min[i], n_max[i]]
     cum = torch.cumsum(n_counts, dim=0) - n_counts
     local_n = (
-        torch.arange(int(n_counts.sum().item()), device=device, dtype=torch.int64)
+        torch.arange(n_total, device=device, dtype=torch.int64)
         - cum[seed_idx]
     )
     n_vals = n_min[seed_idx] + local_n
@@ -170,4 +183,90 @@ def build_position_grid(
         n=n_vals,
         omega_deg=torch.tensor(omega_deg, device=device, dtype=dtype),
     )
+    # Drop positions outside the beam height, matching C IndexerOMP.c:1880
+    # `if (fabs(gc) > HalfBeam) { n++; continue; }`. Without this, the
+    # exhaustive search evaluates orientations at unphysical positions
+    # (sample points outside the illuminated slice) and finds spurious
+    # high-frac peaks that C's adaptive search correctly skips.
+    if h_beam is not None and pos.shape[0] > 0:
+        half_beam = 0.5 * float(h_beam)
+        in_beam = pos[:, 2].abs() <= half_beam
+        pos = pos[in_beam]
+        seed_idx = seed_idx[in_beam]
     return pos, seed_idx
+
+
+def build_position_grid_per_candidate(
+    cand_y0: torch.Tensor,        # (Q,)  per-candidate (y0, z0) on device
+    cand_z0: torch.Tensor,        # (Q,)
+    cand_ys: torch.Tensor,        # (Q,)  originating seed's measured y
+    cand_zs: torch.Tensor,        # (Q,)  originating seed's measured z
+    cand_omega: torch.Tensor,     # (Q,)  originating seed's omega in degrees
+    distance: float,
+    r_sample: float,
+    step_size: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Per-candidate batched variant for cross-seed position-grid construction.
+
+    Like `build_position_grid` but each (y0, z0) candidate carries its own
+    originating seed's (ys, zs, omega) instead of a shared scalar. This lets
+    callers process candidates from many seeds in one batched call rather
+    than once per seed.
+
+    Returns (pos (P, 3), cand_idx (P,)) where cand_idx[i] is the index into
+    the input arrays that position i came from (so callers know which
+    candidate / which seed each position belongs to).
+    """
+    device = cand_y0.device
+    dtype = cand_y0.dtype
+
+    # Direction vectors per candidate (Q,)
+    L = torch.sqrt(distance * distance + cand_y0 ** 2 + cand_z0 ** 2)
+    xi_t = distance / L
+    yi_t = cand_y0 / L
+    zi_t = cand_z0 / L
+
+    # n-range computed on CPU to dodge `.item()` syncs.
+    cand_y0_cpu = cand_y0.detach().to(device="cpu", dtype=dtype, copy=False)
+    cand_z0_cpu = cand_z0.detach().to(device="cpu", dtype=dtype, copy=False)
+    cand_ys_cpu = cand_ys.detach().to(device="cpu", dtype=dtype, copy=False)
+    L_cpu = torch.sqrt(distance * distance + cand_y0_cpu ** 2 + cand_z0_cpu ** 2)
+    xi_cpu = distance / L_cpu
+    yi_cpu = cand_y0_cpu / L_cpu
+    n_min_cpu, n_max_cpu = calc_n_range(
+        xi_cpu, yi_cpu, cand_ys_cpu, cand_y0_cpu, r_sample, step_size,
+    )
+    n_counts_cpu = (n_max_cpu - n_min_cpu + 1).clamp_min(0).to(torch.int64)
+    n_total = int(n_counts_cpu.sum().item())
+    if n_total == 0:
+        return (
+            torch.empty((0, 3), device=device, dtype=dtype),
+            torch.empty((0,), device=device, dtype=torch.int64),
+        )
+
+    n_min = n_min_cpu.to(device=device, non_blocking=True)
+    n_counts = n_counts_cpu.to(device=device, non_blocking=True)
+    cand_idx = torch.repeat_interleave(
+        torch.arange(cand_y0.numel(), device=device, dtype=torch.int64),
+        n_counts,
+    )
+    cum = torch.cumsum(n_counts, dim=0) - n_counts
+    local_n = (
+        torch.arange(n_total, device=device, dtype=torch.int64)
+        - cum[cand_idx]
+    )
+    n_vals = n_min[cand_idx] + local_n
+
+    pos = spot_to_unrotated_batch(
+        xi=xi_t[cand_idx],
+        yi=yi_t[cand_idx],
+        zi=zi_t[cand_idx],
+        ys=cand_ys[cand_idx],
+        zs=cand_zs[cand_idx],
+        y0=cand_y0[cand_idx],
+        z0=cand_z0[cand_idx],
+        step_size_in_x=step_size,
+        n=n_vals,
+        omega_deg=cand_omega[cand_idx],
+    )
+    return pos, cand_idx

@@ -48,7 +48,10 @@ def _build_params() -> IndexerParams:
     p.EtaBinSize = 1.0
     p.OmeBinSize = 1.0
     p.ExcludePoleAngle = 1.0
-    p.MinMatchesToAcceptFrac = 0.3
+    p.MinMatchesToAcceptFrac = 0.05  # low — synthetic dataset has few obs spots
+                                       # so frac is naturally <0.3 even at the
+                                       # true orientation. Matches midas-index's
+                                       # C-compat threshold filter behavior.
     p.RingNumbers = [1, 2]
     p.RingRadii = {1: 56000.0, 2: 81000.0}
     p.OmegaRanges = [(-180.0, 180.0)]

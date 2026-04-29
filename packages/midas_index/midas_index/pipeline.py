@@ -87,6 +87,19 @@ class IndexerContext:
             self.ring_hkl[rn] = self.hkls_real[i, :3].clone()
             self.ring_ttheta[rn] = float(self.hkls_real[i, 5].item() * 2 * RAD2DEG)
 
+        # Per-ring integer (h,k,l) cached as a Python tuple so the per-seed
+        # loop avoids one `.tolist()`-shaped GPU sync per seed. C indexer also
+        # uses a static int table (HKLints) keyed on ring nr.
+        hkls_int_cpu = self.hkls_int.cpu().numpy()
+        self.ring_hkl_int: dict[int, tuple[int, int, int]] = {}
+        for i in range(hkls_int_cpu.shape[0]):
+            rn = int(hkls_int_cpu[i, 3])
+            self.ring_hkl_int[rn] = (
+                int(hkls_int_cpu[i, 0]),
+                int(hkls_int_cpu[i, 1]),
+                int(hkls_int_cpu[i, 2]),
+            )
+
         # Bin geometry
         self.n_eta_bins = int(math.ceil(360.0 / params.EtaBinSize))
         self.n_ome_bins = int(math.ceil(360.0 / params.OmeBinSize))
@@ -108,6 +121,23 @@ class IndexerContext:
             params.RingsToReject if params.RingsToReject else [],
             device=device, dtype=torch.int64,
         )
+
+        # CPU mirror of the obs table. Used by `_setup_group_cpu` to do the
+        # per-group obs-id lookup without touching GPU memory — critical for
+        # the prefetch overlap, since any GPU access from CPU code (e.g.
+        # `.cpu()`) would force a sync on the in-flight GPU stream.
+        self.obs_cpu = self.obs.detach().cpu().numpy()
+
+        # Global max bin occupancy from nData.bin (interleaved as [count, off]).
+        # Precomputed once so `compare_spots` doesn't need a per-call
+        # `n_per.max().item()` sync — the dense candidate gather is sized to
+        # this fixed cap. Empirically the bin distribution is heavily skewed
+        # (median ~1, max ~5) so the wasted memory is negligible.
+        if self.bin_ndata.numel() >= 2:
+            counts_view = self.bin_ndata.view(-1, 2)[:, 0]
+            self.bin_max_count = int(counts_view.max().item())
+        else:
+            self.bin_max_count = 0
 
         # Forward adapter (constructs HEDMForwardModel internally)
         self.adapter = forward_adapter.IndexerForwardAdapter(
@@ -157,6 +187,30 @@ def _spot_to_gv(
     g2 = g1r * so + g2r * co
     g3 = zn
     return torch.tensor([g1, g2, g3], device=device, dtype=dtype)
+
+
+def _spot_to_gv_batch(
+    distance: float,
+    y0_all: torch.Tensor,    # (B,)
+    z0_all: torch.Tensor,    # (B,)
+    omega_deg: float,
+) -> torch.Tensor:
+    """Batched plane normals for B (y0, z0) candidates of one seed.
+
+    Returns (B, 3) on the same device/dtype as y0_all.
+    """
+    L = torch.sqrt(distance * distance + y0_all * y0_all + z0_all * z0_all)
+    xn = distance / L
+    yn = y0_all / L
+    zn = z0_all / L
+    g1r = -1.0 + xn
+    g2r = yn
+    co = math.cos(-omega_deg * DEG2RAD)
+    so = math.sin(-omega_deg * DEG2RAD)
+    g1 = g1r * co - g2r * so
+    g2 = g1r * so + g2r * co
+    g3 = zn
+    return torch.stack([g1, g2, g3], dim=-1)
 
 
 def process_seed(
@@ -213,9 +267,7 @@ def process_seed(
     # 2. Build the global cartesian product of (y0_z0) × orientations × positions
     #    in one shot, so the forward sim and match run as a single batched
     #    tensor op (instead of one Python iteration per y0_z0 candidate).
-    hkl_int_for_ring = tuple(
-        ctx.hkls_int[ctx.hkls_int[:, 3] == seed_ring_nr][0, :3].tolist()
-    )
+    hkl_int_for_ring = ctx.ring_hkl_int[seed_ring_nr]
 
     R_chunks: list[torch.Tensor] = []
     pos_chunks: list[torch.Tensor] = []
@@ -239,6 +291,7 @@ def process_seed(
             seed_z0=torch.tensor([z0], device=ctx.device, dtype=ctx.dtype),
             ys=ys, zs=zs, omega_deg=seed_omega,
             distance=p.Distance, r_sample=p.Rsample, step_size=p.StepsizePos,
+            h_beam=p.Hbeam,
         )
         if positions_k.shape[0] == 0:
             continue
@@ -273,6 +326,7 @@ def process_seed(
         n_eta_bins=ctx.n_eta_bins, n_ome_bins=ctx.n_ome_bins,
         rings_to_reject=ctx.rings_to_reject,
         distance=p.Distance, pos=pos_all,
+        max_n_cap=ctx.bin_max_count,
     )
 
     # 4. Reduce: per-seed best tuple via packed-score argmax.
@@ -289,6 +343,18 @@ def process_seed(
             theor[idx, :, 9].long().unsqueeze(-1) == ctx.rings_to_reject
         ).any(dim=-1)
         n_t_frac = int((valid[idx] & ~in_reject).sum().item())
+    # Per-theor-spot (obs_id, delta_omega) pairs for the winning tuple.
+    # Unmatched theor spots have (0, 0). Mirrors the AllGrainSpots layout
+    # IndexerOMP.c writes to IndexBestFull.bin (line 1635-1640).
+    obs_ids_for_best = result.matched_obs_id[idx]              # (T,) int64
+    delta_for_best = result.delta_omega[idx]                   # (T,) float
+    matched_mask = result.matched[idx]                          # (T,) bool
+    pairs = torch.zeros(
+        (theor.shape[1], 2), device=ctx.device, dtype=ctx.dtype
+    )
+    pairs[matched_mask, 0] = obs_ids_for_best[matched_mask].to(ctx.dtype)
+    pairs[matched_mask, 1] = delta_for_best[matched_mask].to(ctx.dtype)
+
     return SeedResult(
         spot_id=spot_id,
         best_or_mat=R_all[idx].detach().clone(),
@@ -299,6 +365,7 @@ def process_seed(
         frac_matches=float(result.frac_matches[idx].item()),
         avg_ia=float(result.avg_ia[idx].item()),
         matched_ids=result.matched_obs_id[idx][result.matched[idx]].clone(),
+        matched_pairs=pairs.detach().cpu(),
     )
 
 
@@ -307,17 +374,131 @@ def process_seed(
 # ---------------------------------------------------------------------------
 
 
+def _default_use_c_compat() -> bool:
+    """Default ON. Set `MIDAS_INDEX_EXHAUSTIVE=1` to disable the C-compat
+    post-filter and pick the global argmax over all (R, pos) tuples.
+
+    The C-compat filter replays IndexerOMP.c's adaptive `nDelta` position
+    skip + `MinMatchesToAccept` threshold so that midas-index reaches the
+    same winner as C IndexerOMP. Without it, midas finds higher-frac
+    optima that C's heuristic skips, but ~22 of those (in the 500-grain
+    Cu reference) are spurious — high frac coming from a smaller `nT`
+    denominator (4 spots dropped by the pole filter), not a real grain.
+    """
+    import os
+    return os.environ.get("MIDAS_INDEX_EXHAUSTIVE", "0") not in ("1", "true", "yes")
+
+
+def _c_compat_visited_mask(
+    frac_cpu,                        # np.ndarray (N_total,) float64
+    n_m_frac_cpu,                    # np.ndarray (N_total,) int64
+    n_t_frac_cpu,                    # np.ndarray (N_total,) int64
+    seed_meta_valid: list[dict],     # only the valid seeds, in order
+    seg_starts: list[int],           # per-valid-seed start index in flat block
+    min_matches_to_accept_frac: float,
+):
+    """Compute the per-tuple "C would have visited and accepted" mask.
+
+    Replays the adaptive search in IndexerOMP.c:1873-1947:
+
+      for orient o in [0, n_or):
+        n = n_min
+        while n <= n_max:
+          eval(o, n)  -> frac, nM, nT
+          if frac >= 0.5: nDelta = 1
+          else: nDelta = 5 - round_half_away_from_zero(frac * 4 / 0.5)
+          n += nDelta
+
+    Then applies C's threshold: nM_frac >= int(nT_frac * MinMatchesToAcceptFrac).
+
+    Vectorized across the n_or orientations of each (seed, y0z0) — each
+    walk is bounded by `n_pos_per_y0z0[k]` iterations (≤ ~5 in practice),
+    so total work is tiny (~few ms per group on CPU).
+
+    Returns
+    -------
+    mask : np.ndarray (N_total,) bool
+        True for tuples C would have considered as a winner candidate.
+    """
+    import numpy as np
+    n_total = len(frac_cpu)
+    visited = np.zeros(n_total, dtype=bool)
+
+    for s_idx, m in enumerate(seed_meta_valid):
+        seg_start = seg_starts[s_idx]
+        n_or = m["n_or"]
+        n_pos_list = m["n_pos_per_y0z0"]
+        cum_pos = 0
+        for n_pos_k in n_pos_list:
+            if n_pos_k == 0:
+                continue
+            # Vectorized walk across all orientations of this (seed, y0z0).
+            # Each orient steps independently along its position axis.
+            p_per_o = np.zeros(n_or, dtype=np.int64)
+            # At most n_pos_k iterations needed (each step advances by >=1).
+            for _ in range(n_pos_k + 1):
+                active = p_per_o < n_pos_k
+                if not active.any():
+                    break
+                o_active = np.nonzero(active)[0]
+                p_active = p_per_o[o_active]
+                flat = seg_start + (cum_pos + p_active) * n_or + o_active
+                visited[flat] = True
+                f = frac_cpu[flat]
+                # `round_c`: round-half-away-from-zero (C's `round`), not
+                # numpy's banker's rounding. Differs only at exact halves,
+                # but match C semantics.
+                scaled = f * 8.0
+                rounded = np.floor(np.abs(scaled) + 0.5) * np.sign(scaled)
+                nDelta = np.where(f >= 0.5, 1, 5 - rounded.astype(np.int64))
+                p_per_o[o_active] += nDelta
+            cum_pos += n_pos_k
+
+    # MinMatchesToAccept threshold (C uses int truncation):
+    #   MinMatchesToAccept = (int)(nT_frac * MinMatchesToAcceptFrac)
+    #   accept = nM_frac >= MinMatchesToAccept
+    min_accept = (n_t_frac_cpu.astype(np.float64) * min_matches_to_accept_frac).astype(np.int64)
+    above_thresh = n_m_frac_cpu >= min_accept
+
+    return visited & above_thresh
+
+
+def _default_seed_group_size() -> int:
+    """Resolve `seed_group_size` from env (`MIDAS_INDEX_GROUP_SIZE`) or default.
+
+    Larger groups amortize per-group Python/kernel-launch overhead and pack the
+    forward+match into fewer big batches (better SM utilization), at the cost
+    of more GPU memory. 64 is a safe default on H100 (80GB) for the 500-grain
+    Cu reference. CPU defaults to 32 since CPU memory pressure scales worse.
+    """
+    import os
+    raw = os.environ.get("MIDAS_INDEX_GROUP_SIZE")
+    if raw is not None:
+        return max(1, int(raw))
+    return 64
+
+
 def run_block(
     ctx: IndexerContext,
     spot_ids: torch.Tensor,           # int64 (n_total_seeds,)
     block_nr: int,
     n_blocks: int,
+    seed_group_size: int | None = None,
 ) -> IndexerResult:
     """Process one block's slice of spot_ids and return seed results.
 
     Mirrors IndexerOMP.c:2287-2347. Per-block sharding:
         startRowNr = ceil(n_total / n_blocks) * block_nr
         endRowNr   = min(ceil(n_total / n_blocks) * (block_nr+1) - 1, n_total - 1)
+
+    Cross-seed batched in groups of `seed_group_size`: builds the full
+    cartesian product of (y0_z0 × R × pos) for that group into ONE tensor,
+    runs a single forward sim plus a single match call, then does per-seed
+    argmax via async kernel-launch loop. Eliminates per-seed Python `.item()`
+    syncs that one-seed-at-a-time processing would pay. Group size caps
+    peak GPU memory: ~32 seeds × ~1500 tuples × ~100 spots × 14 cols × 4 B
+    ≈ 270 MB for the theor tensor, well within H100 limits even with the
+    dense candidate gather in compare_spots layered on top.
     """
     n_total = int(spot_ids.numel())
     block_size = math.ceil(n_total / max(1, n_blocks))
@@ -326,11 +507,499 @@ def run_block(
     if start > end_inclusive or start >= n_total:
         return IndexerResult(block_nr=block_nr, n_blocks=n_blocks, seeds=[])
 
+    if seed_group_size is None:
+        seed_group_size = _default_seed_group_size()
+
+    if seed_group_size is None:
+        seed_group_size = _default_seed_group_size()
+
+    seeds_block = spot_ids[start:end_inclusive + 1]
+    n_seeds = int(seeds_block.numel())
+
+    group_ranges: list[tuple[int, int]] = []
+    for grp_start in range(0, n_seeds, seed_group_size):
+        group_ranges.append((grp_start, min(grp_start + seed_group_size, n_seeds)))
+    if not group_ranges:
+        return IndexerResult(block_nr=block_nr, n_blocks=n_blocks, seeds=[])
+
+    # Prefetch pattern: while group i's GPU work is in flight, build group
+    # i+1's CPU setup. Eliminates ~40 ms/group of CPU setup from the wall
+    # clock except for the first group's. Only effective on CUDA — on CPU,
+    # there's no parallel stream so we just call the sequential wrapper.
     seeds_out: list[SeedResult] = []
-    for i in range(start, end_inclusive + 1):
-        sid = int(spot_ids[i].item())
-        seed = process_seed(sid, ctx)
-        if seed is not None:
-            seeds_out.append(seed)
+    if ctx.device.type != "cuda":
+        for s, e in group_ranges:
+            seeds_out.extend(_process_seed_group(ctx, seeds_block[s:e]))
+        return IndexerResult(block_nr=block_nr, n_blocks=n_blocks, seeds=seeds_out)
+
+    # CUDA path: prefetch next group's CPU setup during current group's GPU work.
+    next_setup = _setup_group_cpu(ctx, seeds_block[group_ranges[0][0]:group_ranges[0][1]])
+    for i, _ in enumerate(group_ranges):
+        cur_setup = next_setup
+        next_setup = None
+        if cur_setup is None:
+            # Even when current group has no valid seeds, we still need to
+            # prefetch the next group so we don't drop it.
+            if i + 1 < len(group_ranges):
+                ns, ne = group_ranges[i + 1]
+                next_setup = _setup_group_cpu(ctx, seeds_block[ns:ne])
+            continue
+
+        if i + 1 < len(group_ranges):
+            # Launch GPU kernels for current group; the returned closure
+            # blocks for the .cpu() syncs only when called.
+            finalize = _compute_group_gpu_launch(ctx, cur_setup)
+            # Setup NEXT group on CPU. This is the overlap window: GPU is
+            # crunching simulate+compare while CPU builds the next batch.
+            ns, ne = group_ranges[i + 1]
+            next_setup = _setup_group_cpu(ctx, seeds_block[ns:ne])
+            seeds_out.extend(finalize())
+        else:
+            # Last group: nothing to prefetch.
+            seeds_out.extend(_compute_group_gpu(ctx, cur_setup))
 
     return IndexerResult(block_nr=block_nr, n_blocks=n_blocks, seeds=seeds_out)
+
+
+def _setup_group_cpu(
+    ctx: IndexerContext,
+    seeds_block: torch.Tensor,        # (n_seeds,) CPU int64
+) -> dict | None:
+    """CPU-only phase of `_process_seed_group`: builds (R, pos, ref_rad) on CPU.
+
+    Returns a dict of CPU tensors + per-seed metadata, or `None` if no
+    valid seeds in this group. The companion `_compute_group_gpu` consumes
+    this. Splitting the phases lets `run_block` overlap this CPU work with
+    the previous group's GPU compute (prefetch pattern).
+    """
+    p = ctx.params
+    n_seeds = int(seeds_block.numel())
+
+    # Pure-CPU obs lookup (avoids any GPU sync — needed so this function can
+    # run on the CPU thread while a previous group's GPU kernels are still
+    # in flight). Builds: `obs_rows` (which row of obs each seed_id maps to)
+    # and `has_match_cpu` (which seeds have a corresponding obs).
+    import numpy as np
+    obs_id_col = ctx.obs_cpu[:, 4].astype(np.int64)
+    seed_ids = seeds_block.cpu().numpy().astype(np.int64)
+    # Build a hash map seed_id -> obs row. Reuse across calls if cached.
+    if not hasattr(ctx, "_obs_id_to_row"):
+        ctx._obs_id_to_row = {int(v): i for i, v in enumerate(obs_id_col)}
+    obs_id_to_row = ctx._obs_id_to_row
+    obs_rows_list = [obs_id_to_row.get(int(sid), -1) for sid in seed_ids]
+    has_match_cpu = np.array([r >= 0 for r in obs_rows_list], dtype=bool)
+    safe_rows = np.array([max(0, r) for r in obs_rows_list], dtype=np.int64)
+    seed_obs_cpu = ctx.obs_cpu[safe_rows]
+
+    cpu = torch.device("cpu")
+    R_chunks_cpu: list[torch.Tensor] = []
+    pos_chunks_cpu: list[torch.Tensor] = []
+    ref_rad_chunks_cpu: list[torch.Tensor] = []
+    seed_meta: list[dict] = []
+
+    if not hasattr(ctx, "_ring_hkl_cpu"):
+        ctx._ring_hkl_cpu = {
+            rn: t.detach().to(device=cpu) for rn, t in ctx.ring_hkl.items()
+        }
+
+    for i in range(n_seeds):
+        sid = int(seeds_block[i].item())
+        if not bool(has_match_cpu[i]):
+            seed_meta.append({"sid": sid, "valid": False})
+            continue
+        seed_obs = seed_obs_cpu[i]
+        ys = float(seed_obs[0])
+        zs = float(seed_obs[1])
+        seed_omega = float(seed_obs[2])
+        seed_ring_rad = float(seed_obs[3])
+        seed_eta = float(seed_obs[6])
+        seed_ring_nr = int(seed_obs[5])
+        if seed_ring_nr not in ctx.ring_hkl:
+            seed_meta.append({"sid": sid, "valid": False})
+            continue
+
+        hkl_cpu = ctx._ring_hkl_cpu[seed_ring_nr]
+        ring_rad_user = p.get_ring_radius(seed_ring_nr)
+        ring_rad = ring_rad_user if ring_rad_user > 0 else seed_ring_rad
+        ttheta = ctx.ring_ttheta[seed_ring_nr]
+        hkl_int_for_ring = ctx.ring_hkl_int[seed_ring_nr]
+
+        if p.UseFriedelPairs == 1:
+            seed_yz = seeds_module.generate_ideal_spots_friedel(
+                ys=ys, zs=zs, ttheta_deg=ttheta, eta_deg=seed_eta, omega_deg=seed_omega,
+                ring_nr=seed_ring_nr, ring_rad=ring_rad,
+                rsample=p.Rsample, hbeam=p.Hbeam,
+                ome_tol=p.MarginOme, radius_tol=p.MarginRad,
+                obs_spots=ctx.obs, device=cpu, dtype=ctx.dtype,
+            )
+        elif p.UseFriedelPairs == 2:
+            seed_yz = seeds_module.generate_ideal_spots_friedel_mixed(
+                ys=ys, zs=zs, ttheta_deg=ttheta, eta_deg=seed_eta, omega_deg=seed_omega,
+                ring_nr=seed_ring_nr, ring_rad=ring_rad, lsd=p.Distance,
+                rsample=p.Rsample, hbeam=p.Hbeam,
+                step_size_pos=p.StepsizePos,
+                ome_tol=p.MarginOme, radial_tol=p.MarginRad, eta_tol_um=p.MarginEta,
+                obs_spots=ctx.obs, device=cpu, dtype=ctx.dtype,
+            )
+        else:
+            seed_yz = seeds_module.generate_ideal_spots(
+                ys=ys, zs=zs, ttheta_deg=ttheta, eta_deg=seed_eta,
+                ring_rad=ring_rad, rsample=p.Rsample, hbeam=p.Hbeam,
+                step_size=p.StepsizePos, device=cpu, dtype=ctx.dtype,
+            )
+        if seed_yz.shape[0] == 0:
+            seed_meta.append({"sid": sid, "valid": False})
+            continue
+
+        y0_all = seed_yz[:, 0]
+        z0_all = seed_yz[:, 1]
+        plane_normals = _spot_to_gv_batch(p.Distance, y0_all, z0_all, seed_omega)
+        Rs_B = orientation_grid.generate_candidate_orientations_batched(
+            hkl=hkl_cpu, plane_normals=plane_normals,
+            stepsize_orient_deg=p.StepsizeOrient,
+            ring_nr=seed_ring_nr, space_group=p.SpaceGroup,
+            hkl_int=hkl_int_for_ring, abcabg=p.LatticeConstant,
+        )
+        n_or = Rs_B.shape[1]
+        if n_or == 0:
+            seed_meta.append({"sid": sid, "valid": False})
+            continue
+
+        positions_seed, candidate_idx = position_grid.build_position_grid(
+            seed_y0=y0_all, seed_z0=z0_all,
+            ys=ys, zs=zs, omega_deg=seed_omega,
+            distance=p.Distance, r_sample=p.Rsample, step_size=p.StepsizePos,
+            h_beam=p.Hbeam,
+        )
+        if positions_seed.shape[0] == 0:
+            seed_meta.append({"sid": sid, "valid": False})
+            continue
+
+        Rs_per_pos = Rs_B[candidate_idx]
+        pos_expanded = positions_seed.unsqueeze(1).expand(-1, n_or, -1)
+        local_R_cat = Rs_per_pos.reshape(-1, 3, 3)
+        local_pos_cat = pos_expanded.reshape(-1, 3)
+        n_local = local_R_cat.shape[0]
+
+        # Per-(y0,z0) position counts — used by the C-compat post-filter to
+        # replay IndexerOMP's adaptive `nDelta` skip walk. See
+        # `_c_compat_visited_mask` for the algorithm.
+        n_pos_per_y0z0 = torch.bincount(candidate_idx, minlength=y0_all.numel()).tolist()
+
+        R_chunks_cpu.append(local_R_cat)
+        pos_chunks_cpu.append(local_pos_cat)
+        ref_rad_chunks_cpu.append(
+            torch.full((n_local,), ring_rad, device=cpu, dtype=ctx.dtype)
+        )
+        seed_meta.append({
+            "sid": sid, "valid": True,
+            "ring_nr": seed_ring_nr,
+            "n_local": n_local,
+            "n_or": n_or,
+            "n_pos_per_y0z0": n_pos_per_y0z0,
+        })
+
+    if not R_chunks_cpu:
+        return None
+
+    R_all_cpu = torch.cat(R_chunks_cpu, dim=0).pin_memory() if ctx.device.type == "cuda" else torch.cat(R_chunks_cpu, dim=0)
+    pos_all_cpu = torch.cat(pos_chunks_cpu, dim=0).pin_memory() if ctx.device.type == "cuda" else torch.cat(pos_chunks_cpu, dim=0)
+    ref_rad_all_cpu = torch.cat(ref_rad_chunks_cpu, dim=0).pin_memory() if ctx.device.type == "cuda" else torch.cat(ref_rad_chunks_cpu, dim=0)
+
+    return {
+        "R_cpu": R_all_cpu,
+        "pos_cpu": pos_all_cpu,
+        "ref_rad_cpu": ref_rad_all_cpu,
+        "seed_meta": seed_meta,
+    }
+
+
+def _compute_group_gpu(
+    ctx: IndexerContext,
+    setup: dict,
+) -> list[SeedResult]:
+    """GPU phase: transfer, forward sim, compare, argmax, build SeedResults.
+
+    Consumes the CPU-resident output of `_setup_group_cpu`. Kernels are
+    enqueued async so that any CPU work scheduled between this call and the
+    final `.cpu()` syncs (e.g. setting up the next group) overlaps with
+    GPU compute on a CUDA device.
+    """
+    p = ctx.params
+    seed_meta = setup["seed_meta"]
+    use_c_compat = _default_use_c_compat()
+
+    # Async transfer to GPU.
+    R_all = setup["R_cpu"].to(device=ctx.device, non_blocking=True)
+    pos_all = setup["pos_cpu"].to(device=ctx.device, non_blocking=True)
+    ref_rad_all = setup["ref_rad_cpu"].to(device=ctx.device, non_blocking=True)
+
+    # Forward simulation across all tuples.
+    theor, valid = ctx.adapter.simulate(R_all, pos_all, lattice=None)
+
+    # Match. With `max_n_cap`, this returns async — no internal `.item()` sync.
+    result = matching.compare_spots(
+        theor=theor, valid=valid, obs=ctx.obs,
+        bin_data=ctx.bin_data, bin_ndata=ctx.bin_ndata,
+        ref_rad=ref_rad_all,
+        margin_rad=p.MarginRad, margin_radial=p.MarginRadial,
+        eta_margins=ctx.eta_margins, ome_margins=ctx.ome_margins,
+        eta_bin_size=p.EtaBinSize, ome_bin_size=p.OmeBinSize,
+        n_eta_bins=ctx.n_eta_bins, n_ome_bins=ctx.n_ome_bins,
+        rings_to_reject=ctx.rings_to_reject,
+        distance=p.Distance, pos=pos_all,
+        max_n_cap=ctx.bin_max_count,
+    )
+
+    keys = reduce_.pack_score(result.frac_matches, result.avg_ia)
+    seed_meta_valid = [m for m in seed_meta if m["valid"]]
+    n_per_valid = [m["n_local"] for m in seed_meta_valid]
+    seg_starts: list[int] = []
+    cur = 0
+    for nl in n_per_valid:
+        seg_starts.append(cur)
+        cur += nl
+    if not seed_meta_valid:
+        return []
+
+    if use_c_compat:
+        # Apply C IndexerOMP's adaptive nDelta skip + MinMatchesToAccept
+        # threshold so we land on the same winner as C. See
+        # `_c_compat_visited_mask` for details. CPU-side post-process of
+        # the existing exhaustive results — no GPU rework.
+        import numpy as np
+        frac_cpu = result.frac_matches.cpu().numpy()
+        n_m_frac_cpu = result.n_matches_frac.cpu().numpy()
+        n_t_frac_cpu = result.n_t_frac.cpu().numpy()
+        mask_cpu = _c_compat_visited_mask(
+            frac_cpu, n_m_frac_cpu, n_t_frac_cpu,
+            seed_meta_valid, seg_starts, p.MinMatchesToAcceptFrac,
+        )
+        keys_cpu = keys.cpu().numpy()
+        # Mark non-eligible tuples with INT64_MIN so argmax skips them.
+        keys_cpu[~mask_cpu] = np.iinfo(np.int64).min
+        best_global_idx_list: list[int] = []
+        # Per-seed: track which seeds have ZERO eligible tuples (matches
+        # C's `bestMatchFound == 0` early return — no result for that seed).
+        seed_has_match: list[bool] = []
+        for s_start, s_len in zip(seg_starts, n_per_valid):
+            seg = keys_cpu[s_start:s_start + s_len]
+            seg_mask = mask_cpu[s_start:s_start + s_len]
+            if not seg_mask.any():
+                seed_has_match.append(False)
+                best_global_idx_list.append(s_start)  # placeholder
+            else:
+                seed_has_match.append(True)
+                best_global_idx_list.append(s_start + int(seg.argmax()))
+        best_global_idx = torch.tensor(best_global_idx_list, device=ctx.device, dtype=torch.int64)
+    else:
+        # Exhaustive: pure GPU per-seed argmax. Every seed produces a result.
+        seed_has_match = [True] * len(seed_meta_valid)
+        best_global_idx_list_gpu: list[torch.Tensor] = []
+        for s_start, s_len in zip(seg_starts, n_per_valid):
+            local_argmax = keys[s_start:s_start + s_len].argmax()
+            best_global_idx_list_gpu.append(s_start + local_argmax)
+        best_global_idx = torch.stack(best_global_idx_list_gpu)
+
+    # Batched gather to single CPU transfer.
+    best_R = R_all[best_global_idx].detach().cpu()
+    best_pos = pos_all[best_global_idx].detach().cpu()
+    best_n_match = result.n_matches[best_global_idx].cpu()
+    best_frac = result.frac_matches[best_global_idx].cpu()
+    best_ia = result.avg_ia[best_global_idx].cpu()
+    best_valid = valid[best_global_idx]
+    best_n_t = best_valid.sum(dim=-1).cpu()
+    best_obs_id = result.matched_obs_id[best_global_idx].cpu()
+    best_delta = result.delta_omega[best_global_idx].cpu()
+    best_match_mask = result.matched[best_global_idx].cpu()
+    if ctx.rings_to_reject.numel() > 0:
+        best_theor_rings = theor[best_global_idx, :, 9].long()
+        in_reject = (
+            best_theor_rings.unsqueeze(-1) == ctx.rings_to_reject
+        ).any(dim=-1)
+        best_n_t_frac = (best_valid & ~in_reject).sum(dim=-1).cpu()
+    else:
+        best_n_t_frac = best_n_t
+
+    T = theor.shape[1]
+    seeds_out: list[SeedResult] = []
+    valid_idx = 0
+    for m in seed_meta:
+        if not m["valid"]:
+            continue
+        # In c_compat mode, a "valid" seed (one with R/pos tuples to evaluate)
+        # may still produce no result if no tuple passed C's MinMatchesToAccept
+        # threshold. Mirrors C's `bestMatchFound == 0` early return.
+        if not seed_has_match[valid_idx]:
+            valid_idx += 1
+            continue
+        pairs = torch.zeros((T, 2), dtype=ctx.dtype)
+        mm = best_match_mask[valid_idx]
+        pairs[mm, 0] = best_obs_id[valid_idx][mm].to(ctx.dtype)
+        pairs[mm, 1] = best_delta[valid_idx][mm].to(ctx.dtype)
+        seeds_out.append(SeedResult(
+            spot_id=m["sid"],
+            best_or_mat=best_R[valid_idx].clone(),
+            best_pos=best_pos[valid_idx].clone(),
+            n_matches=int(best_n_match[valid_idx].item()),
+            n_t_spots=int(best_n_t[valid_idx].item()),
+            n_t_frac_calc=int(best_n_t_frac[valid_idx].item()),
+            frac_matches=float(best_frac[valid_idx].item()),
+            avg_ia=float(best_ia[valid_idx].item()),
+            matched_ids=best_obs_id[valid_idx][mm].clone(),
+            matched_pairs=pairs,
+        ))
+        valid_idx += 1
+    return seeds_out
+
+
+def _compute_group_gpu_launch(ctx: IndexerContext, setup: dict):
+    """Async launch of GPU work; returns a `finalize()` closure.
+
+    Splits `_compute_group_gpu` into:
+      1. Kernel-launch portion (this function) — enqueues simulate, compare,
+         pack_score, argmax. All async — no `.cpu()` or `.item()` sync.
+      2. Finalize closure — runs the per-tuple gather + `.cpu()` syncs +
+         SeedResult construction. Calling it blocks until the GPU finishes.
+
+    The split lets `run_block` run setup_cpu(group i+1) on the CPU thread
+    *between* steps 1 and 2, so the CPU work overlaps with the group-i
+    kernels still executing on the CUDA stream.
+    """
+    p = ctx.params
+    seed_meta = setup["seed_meta"]
+
+    R_all = setup["R_cpu"].to(device=ctx.device, non_blocking=True)
+    pos_all = setup["pos_cpu"].to(device=ctx.device, non_blocking=True)
+    ref_rad_all = setup["ref_rad_cpu"].to(device=ctx.device, non_blocking=True)
+
+    theor, valid = ctx.adapter.simulate(R_all, pos_all, lattice=None)
+    result = matching.compare_spots(
+        theor=theor, valid=valid, obs=ctx.obs,
+        bin_data=ctx.bin_data, bin_ndata=ctx.bin_ndata,
+        ref_rad=ref_rad_all,
+        margin_rad=p.MarginRad, margin_radial=p.MarginRadial,
+        eta_margins=ctx.eta_margins, ome_margins=ctx.ome_margins,
+        eta_bin_size=p.EtaBinSize, ome_bin_size=p.OmeBinSize,
+        n_eta_bins=ctx.n_eta_bins, n_ome_bins=ctx.n_ome_bins,
+        rings_to_reject=ctx.rings_to_reject,
+        distance=p.Distance, pos=pos_all,
+        max_n_cap=ctx.bin_max_count,
+    )
+    keys = reduce_.pack_score(result.frac_matches, result.avg_ia)
+    seed_meta_valid = [m for m in seed_meta if m["valid"]]
+    n_per_valid = [m["n_local"] for m in seed_meta_valid]
+    seg_starts: list[int] = []
+    cur = 0
+    for nl in n_per_valid:
+        seg_starts.append(cur)
+        cur += nl
+    if not seed_meta_valid:
+        return lambda: []
+
+    use_c_compat = _default_use_c_compat()
+    if not use_c_compat:
+        # Async GPU per-seed argmax (kernels enqueued, sync deferred to finalize).
+        best_global_idx_list_gpu: list[torch.Tensor] = []
+        for s_start, s_len in zip(seg_starts, n_per_valid):
+            local_argmax = keys[s_start:s_start + s_len].argmax()
+            best_global_idx_list_gpu.append(s_start + local_argmax)
+        best_global_idx_pre = torch.stack(best_global_idx_list_gpu)
+    else:
+        best_global_idx_pre = None  # computed in finalize after sync
+
+    def finalize() -> list[SeedResult]:
+        nonlocal best_global_idx_pre
+        seed_has_match: list[bool]
+        if use_c_compat:
+            # Sync small score tensors to CPU, build C-compat mask, argmax on CPU.
+            # The previous group's GPU kernels (and this group's setup_cpu)
+            # already overlapped during the launch's enqueue phase.
+            import numpy as np
+            frac_cpu = result.frac_matches.cpu().numpy()
+            n_m_frac_cpu = result.n_matches_frac.cpu().numpy()
+            n_t_frac_cpu = result.n_t_frac.cpu().numpy()
+            mask_cpu = _c_compat_visited_mask(
+                frac_cpu, n_m_frac_cpu, n_t_frac_cpu,
+                seed_meta_valid, seg_starts, p.MinMatchesToAcceptFrac,
+            )
+            keys_cpu = keys.cpu().numpy()
+            keys_cpu[~mask_cpu] = np.iinfo(np.int64).min
+            best_idx_cpu: list[int] = []
+            seed_has_match = []
+            for s_start, s_len in zip(seg_starts, n_per_valid):
+                seg_mask = mask_cpu[s_start:s_start + s_len]
+                if not seg_mask.any():
+                    seed_has_match.append(False)
+                    best_idx_cpu.append(s_start)  # placeholder
+                else:
+                    seed_has_match.append(True)
+                    best_idx_cpu.append(s_start + int(keys_cpu[s_start:s_start + s_len].argmax()))
+            best_global_idx = torch.tensor(best_idx_cpu, device=ctx.device, dtype=torch.int64)
+        else:
+            best_global_idx = best_global_idx_pre
+            seed_has_match = [True] * len(seed_meta_valid)
+
+        best_R = R_all[best_global_idx].detach().cpu()
+        best_pos = pos_all[best_global_idx].detach().cpu()
+        best_n_match = result.n_matches[best_global_idx].cpu()
+        best_frac = result.frac_matches[best_global_idx].cpu()
+        best_ia = result.avg_ia[best_global_idx].cpu()
+        best_valid = valid[best_global_idx]
+        best_n_t = best_valid.sum(dim=-1).cpu()
+        best_obs_id = result.matched_obs_id[best_global_idx].cpu()
+        best_delta = result.delta_omega[best_global_idx].cpu()
+        best_match_mask = result.matched[best_global_idx].cpu()
+        if ctx.rings_to_reject.numel() > 0:
+            best_theor_rings = theor[best_global_idx, :, 9].long()
+            in_reject = (
+                best_theor_rings.unsqueeze(-1) == ctx.rings_to_reject
+            ).any(dim=-1)
+            best_n_t_frac = (best_valid & ~in_reject).sum(dim=-1).cpu()
+        else:
+            best_n_t_frac = best_n_t
+        T = theor.shape[1]
+        seeds_out: list[SeedResult] = []
+        valid_idx = 0
+        for m in seed_meta:
+            if not m["valid"]:
+                continue
+            if not seed_has_match[valid_idx]:
+                # In c_compat mode, no tuple passed C's MinMatchesToAccept
+                # threshold for this seed — match C's `bestMatchFound == 0`
+                # early return.
+                valid_idx += 1
+                continue
+            pairs = torch.zeros((T, 2), dtype=ctx.dtype)
+            mm = best_match_mask[valid_idx]
+            pairs[mm, 0] = best_obs_id[valid_idx][mm].to(ctx.dtype)
+            pairs[mm, 1] = best_delta[valid_idx][mm].to(ctx.dtype)
+            seeds_out.append(SeedResult(
+                spot_id=m["sid"],
+                best_or_mat=best_R[valid_idx].clone(),
+                best_pos=best_pos[valid_idx].clone(),
+                n_matches=int(best_n_match[valid_idx].item()),
+                n_t_spots=int(best_n_t[valid_idx].item()),
+                n_t_frac_calc=int(best_n_t_frac[valid_idx].item()),
+                frac_matches=float(best_frac[valid_idx].item()),
+                avg_ia=float(best_ia[valid_idx].item()),
+                matched_ids=best_obs_id[valid_idx][mm].clone(),
+                matched_pairs=pairs,
+            ))
+            valid_idx += 1
+        return seeds_out
+
+    return finalize
+
+
+def _process_seed_group(
+    ctx: IndexerContext,
+    seeds_block: torch.Tensor,        # (n_seeds,) CPU int64
+) -> list[SeedResult]:
+    """Sequential compatibility wrapper: run setup_cpu then compute_gpu."""
+    setup = _setup_group_cpu(ctx, seeds_block)
+    if setup is None:
+        return []
+    return _compute_group_gpu(ctx, setup)
+
+

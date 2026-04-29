@@ -31,7 +31,9 @@ class MatchResult:
     """Per-evaluation-tuple match outcome."""
 
     n_matches: torch.Tensor          # (N,) int64 — total matched theor spots
-    frac_matches: torch.Tensor       # (N,) float — n_matches_frac_calc / n_T_frac_calc
+    n_matches_frac: torch.Tensor     # (N,) int64 — matches excluding rings_to_reject (denom of frac)
+    n_t_frac: torch.Tensor           # (N,) int64 — valid theor spots excluding rings_to_reject
+    frac_matches: torch.Tensor       # (N,) float — n_matches_frac / n_t_frac
     avg_ia: torch.Tensor             # (N,) float — IA average; placeholder for v0.1.0
     matched_obs_id: torch.Tensor     # (N, T) int64 — best obs spot id per theor spot, -1 if none
     matched_obs_row: torch.Tensor    # (N, T) int64 — row index in `obs` for each match, -1 if none
@@ -102,8 +104,38 @@ def compare_spots(
     rings_to_reject: torch.Tensor,   # (n_reject,) int — for skipRadialFilter + nMatchesFracCalc
     distance: float | None = None,    # Lsd in um — required for avg_ia computation
     pos: torch.Tensor | None = None,  # (N, 3) sample-frame (ga,gb,gc) — required for avg_ia
+    strategy: str = "dense",          # "dense" or "jagged"
+    chunk_size: int = 65536,          # for "jagged": rows of N processed per chunk
+    max_n_cap: int | None = None,     # if known, skip the per-call n_per.max() sync
 ) -> MatchResult:
-    """Vectorized binned matching. See module docstring for tie-break semantics."""
+    """Vectorized binned matching. See module docstring for tie-break semantics.
+
+    `strategy="dense"` (default): one allocation of the candidate gather
+    `(N, T, max_n)` across all tuples. Fastest when memory permits.
+
+    `strategy="jagged"`: split N into chunks of `chunk_size` and process
+    each chunk sequentially, then concatenate. Identical numerics to
+    "dense" but bounds peak memory by `chunk_size * T * max_n`. Use when
+    the dense path OOMs (huge N or unbalanced bins).
+    """
+    if strategy not in ("dense", "jagged"):
+        raise ValueError(
+            f"strategy must be 'dense' or 'jagged'; got {strategy!r}"
+        )
+    if strategy == "jagged" and theor.shape[0] > chunk_size:
+        return _compare_spots_jagged(
+            theor=theor, valid=valid, obs=obs,
+            bin_data=bin_data, bin_ndata=bin_ndata,
+            ref_rad=ref_rad,
+            margin_rad=margin_rad, margin_radial=margin_radial,
+            eta_margins=eta_margins, ome_margins=ome_margins,
+            eta_bin_size=eta_bin_size, ome_bin_size=ome_bin_size,
+            n_eta_bins=n_eta_bins, n_ome_bins=n_ome_bins,
+            rings_to_reject=rings_to_reject,
+            distance=distance, pos=pos,
+            chunk_size=chunk_size,
+            max_n_cap=max_n_cap,
+        )
     device = theor.device
     dtype = theor.dtype
     N, T, _ = theor.shape
@@ -122,11 +154,20 @@ def compare_spots(
     n_per, data_offset = lookup_bin_counts(bin_pos, bin_ndata)   # (N, T) each
 
     # 2. Dense candidate gather. max_nspots = max bin occupancy.
-    max_n = int(n_per.max().item()) if n_per.numel() else 0
+    # When `max_n_cap` is provided (precomputed at IndexerContext init from
+    # the bin_ndata global max), we avoid the per-call `n_per.max().item()`
+    # GPU sync — letting `compare_spots` enqueue all kernels async, which is
+    # needed for the prefetch overlap in `run_block`.
+    if max_n_cap is not None:
+        max_n = int(max_n_cap)
+    else:
+        max_n = int(n_per.max().item()) if n_per.numel() else 0
     if max_n == 0:
         zeros = torch.zeros((N, T), dtype=torch.bool, device=device)
         return MatchResult(
             n_matches=torch.zeros(N, dtype=torch.int64, device=device),
+            n_matches_frac=torch.zeros(N, dtype=torch.int64, device=device),
+            n_t_frac=valid.sum(dim=-1).to(torch.int64).clamp_min(1),
             frac_matches=torch.zeros(N, dtype=dtype, device=device),
             avg_ia=torch.zeros(N, dtype=dtype, device=device),
             matched_obs_id=torch.full((N, T), -1, dtype=torch.int64, device=device),
@@ -228,12 +269,76 @@ def compare_spots(
 
     return MatchResult(
         n_matches=n_matches,
+        n_matches_frac=n_matches_frac,
+        n_t_frac=n_t_frac,
         frac_matches=frac,
         avg_ia=avg_ia,
         matched_obs_id=matched_id,
         matched_obs_row=matched_row,
         delta_omega=delta_ome,
         matched=has_match,
+    )
+
+
+def _compare_spots_jagged(
+    theor: torch.Tensor,
+    valid: torch.Tensor,
+    obs: torch.Tensor,
+    bin_data: torch.Tensor,
+    bin_ndata: torch.Tensor,
+    *,
+    ref_rad: torch.Tensor,
+    margin_rad: float,
+    margin_radial: float,
+    eta_margins: torch.Tensor,
+    ome_margins: torch.Tensor,
+    eta_bin_size: float,
+    ome_bin_size: float,
+    n_eta_bins: int,
+    n_ome_bins: int,
+    rings_to_reject: torch.Tensor,
+    distance: float | None,
+    pos: torch.Tensor | None,
+    chunk_size: int,
+    max_n_cap: int | None = None,
+) -> MatchResult:
+    """Memory-bounded variant of `compare_spots`: chunks N axis into
+    `chunk_size` slabs and concatenates per-slab MatchResults.
+
+    Same numerics as the dense path. Use when N is large enough that
+    `(N, T, max_n)` doesn't fit in memory.
+    """
+    N = theor.shape[0]
+    chunks: list[MatchResult] = []
+    for start in range(0, N, chunk_size):
+        stop = min(start + chunk_size, N)
+        sl = slice(start, stop)
+        chunk_pos = pos[sl] if pos is not None else None
+        chunks.append(
+            compare_spots(
+                theor=theor[sl], valid=valid[sl], obs=obs,
+                bin_data=bin_data, bin_ndata=bin_ndata,
+                ref_rad=ref_rad[sl],
+                margin_rad=margin_rad, margin_radial=margin_radial,
+                eta_margins=eta_margins, ome_margins=ome_margins,
+                eta_bin_size=eta_bin_size, ome_bin_size=ome_bin_size,
+                n_eta_bins=n_eta_bins, n_ome_bins=n_ome_bins,
+                rings_to_reject=rings_to_reject,
+                distance=distance, pos=chunk_pos,
+                strategy="dense",
+                max_n_cap=max_n_cap,
+            )
+        )
+    return MatchResult(
+        n_matches=torch.cat([c.n_matches for c in chunks], dim=0),
+        n_matches_frac=torch.cat([c.n_matches_frac for c in chunks], dim=0),
+        n_t_frac=torch.cat([c.n_t_frac for c in chunks], dim=0),
+        frac_matches=torch.cat([c.frac_matches for c in chunks], dim=0),
+        avg_ia=torch.cat([c.avg_ia for c in chunks], dim=0),
+        matched_obs_id=torch.cat([c.matched_obs_id for c in chunks], dim=0),
+        matched_obs_row=torch.cat([c.matched_obs_row for c in chunks], dim=0),
+        delta_omega=torch.cat([c.delta_omega for c in chunks], dim=0),
+        matched=torch.cat([c.matched for c in chunks], dim=0),
     )
 
 

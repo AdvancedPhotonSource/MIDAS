@@ -31,6 +31,11 @@ class SeedResult:
     frac_matches: float
     avg_ia: float
     matched_ids: "torch.Tensor"      # (n_matches,) int
+    # (n_t_spots, 2) per-theor-spot (matched_obs_id, delta_omega) for the
+    # winning tuple; unmatched rows are (0, 0). Consumed by
+    # `io.output.write_full_record` to populate IndexBestFull.bin per
+    # IndexerOMP.c::WriteBestMatchBin (line 1635-1640).
+    matched_pairs: "torch.Tensor | None" = None
 
 
 @dataclass

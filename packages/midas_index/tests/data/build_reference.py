@@ -41,7 +41,23 @@ from midas_stress.orientation import (
 )
 
 
-MIDAS_BIN_DIR = Path("/Users/hsharma/opt/MIDAS/FF_HEDM/bin")
+def _resolve_midas_bin_dir() -> Path:
+    """Locate FF_HEDM/bin. Override via the MIDAS_BIN_DIR env var."""
+    env = os.environ.get("MIDAS_BIN_DIR")
+    if env:
+        return Path(env)
+    # Walk up from this file (tests/data/build_reference.py):
+    #   parents[0] = tests/data
+    #   parents[1] = tests
+    #   parents[2] = midas_index
+    #   parents[3] = packages
+    #   parents[4] = MIDAS root
+    here = Path(__file__).resolve()
+    midas_root = here.parents[4]
+    return midas_root / "FF_HEDM" / "bin"
+
+
+MIDAS_BIN_DIR = _resolve_midas_bin_dir()
 INDEXER_OMP_BIN = MIDAS_BIN_DIR / "IndexerOMP"
 GETHKLLIST_BIN = MIDAS_BIN_DIR / "GetHKLList"
 
@@ -319,10 +335,14 @@ def run_torch_indexer(work_dir: Path, n_seeds: int, num_procs: int = 4) -> Path:
     out = work_dir / "midas"
     out.mkdir(exist_ok=True)
     write_paramstest(work_dir, out)
+    # Honor MIDAS_INDEX_DEVICE / MIDAS_INDEX_DTYPE if set; otherwise default
+    # to cpu/float64 for byte-identical comparison vs the C reference.
+    device = os.environ.get("MIDAS_INDEX_DEVICE", "cpu")
+    dtype = os.environ.get("MIDAS_INDEX_DTYPE", "float64")
     cmd = [
         sys.executable, "-m", "midas_index",
         "paramstest.txt", "0", "1", str(n_seeds), str(num_procs),
-        "--device", "cpu", "--dtype", "float64",
+        "--device", device, "--dtype", dtype,
     ]
     print("$", " ".join(cmd), "  (cwd:", work_dir, ")")
     env = dict(os.environ)

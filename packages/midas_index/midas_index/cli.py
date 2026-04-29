@@ -51,8 +51,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    import numpy as np
+
     from .indexer import Indexer
-    from .io.output import close_output_files, open_output_files, write_seed_record
+    from .io.output import (
+        close_output_files,
+        open_output_files,
+        write_full_record,
+        write_seed_record,
+    )
 
     indexer = Indexer.from_param_file(
         args.param_file, device=args.device, dtype=args.dtype,
@@ -84,6 +91,9 @@ def main(argv: list[str] | None = None) -> int:
             if offset < 0:
                 continue
             write_seed_record(fd_best, seed, offset)
+            if seed.matched_pairs is not None:
+                pairs_np = seed.matched_pairs.numpy().astype(np.float64)
+                write_full_record(fd_full, pairs_np, offset)
     finally:
         close_output_files(fd_best, fd_full)
 
