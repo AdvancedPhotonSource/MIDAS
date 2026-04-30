@@ -259,6 +259,90 @@ def mask_sino_by_assignment(sinos_main, omegas_arr, nrHKLs_arr, max_id,
     return refined
 
 
+def confidence_weighted_potts(posterior, max_id, lam, max_iter=30, conf_floor=0.05):
+    """Confidence-weighted Potts (ICM) smoothing of a grain-ID map.
+
+    Per-voxel margin = (top1_posterior - top2_posterior) / max(posterior).
+    For voxel V with margin m_V, the data term is scaled by (m_V + conf_floor):
+        cost(g | V) = (m_V + conf_floor) * unary(g, V) + lam * pair_cost(g | V)
+    where unary(g, V) = -log(posterior(g, V) + eps) and pair_cost counts
+    4-conn neighbors with grain != g.
+
+    High-margin voxels (clear winner) → unary dominates → don't flip.
+    Low-margin voxels (ambiguous) → pair_cost dominates → pulled toward
+    neighborhood majority. This is the "no fabrication" regularizer: it
+    only smooths where per-voxel evidence is genuinely uncertain.
+
+    Voxels with max_id == -1 (no evidence) are excluded entirely from the
+    optimization and remain -1 in the output.
+
+    Parameters
+    ----------
+    posterior : ndarray (nGrs, H, W)
+        Bayesian posterior (shape × orient_score), pre-argmax.
+    max_id : ndarray (H, W) int32
+        Initial grain assignment (e.g. argmax of posterior). -1 = no evidence.
+    lam : float
+        Pairwise penalty per disagreeing neighbor.
+    max_iter : int
+        Max ICM sweeps (default 30).
+    conf_floor : float
+        Minimum data weight (prevents fully-overriding any voxel by neighbors).
+    """
+    log = logging.getLogger('pf_midas')
+    nGrs, H, W = posterior.shape
+    eps = 1e-6
+    full_max = posterior.max(axis=0)
+    no_evidence = (full_max <= 0)
+    active = ~no_evidence
+
+    # Per-voxel margin -> data weight
+    sorted_p = np.sort(posterior, axis=0)[::-1]
+    margin = sorted_p[0] - (sorted_p[1] if nGrs > 1 else 0.0)
+    if posterior.max() > 0:
+        margin = margin / posterior.max()
+    weights = (margin + conf_floor)
+
+    unary = -np.log(posterior + eps)
+    if no_evidence.any():
+        unary[:, no_evidence] = 0.0
+
+    L = max_id.copy().astype(np.int32)
+    L[L < 0] = 0  # placeholder for inactive voxels (restored below)
+
+    n_changed_total = 0
+    for it in range(max_iter):
+        L_new = L.copy()
+        n_chg = 0
+        for r in range(H):
+            for c in range(W):
+                if not active[r, c]:
+                    continue
+                nbr = []
+                if r > 0 and active[r - 1, c]: nbr.append(L[r - 1, c])
+                if r < H - 1 and active[r + 1, c]: nbr.append(L[r + 1, c])
+                if c > 0 and active[r, c - 1]: nbr.append(L[r, c - 1])
+                if c < W - 1 and active[r, c + 1]: nbr.append(L[r, c + 1])
+                if not nbr:
+                    continue
+                pair_cost = np.array(
+                    [sum(1 for n in nbr if n != g) for g in range(nGrs)])
+                cost = weights[r, c] * unary[:, r, c] + lam * pair_cost
+                best = int(np.argmin(cost))
+                if best != L[r, c]:
+                    L_new[r, c] = best
+                    n_chg += 1
+        L = L_new
+        n_changed_total += n_chg
+        if n_chg == 0:
+            break
+    L[no_evidence] = -1
+    log.info(
+        f"  CW-Potts (λ={lam}, conf_floor={conf_floor}): {n_changed_total} "
+        f"voxel flips across {it + 1} ICM passes")
+    return L
+
+
 def voxelmap_recon(topdir, sgnum, nScans, nGrs, max_ang_deg=1.0, min_conf=0.5):
     """Build per-grain reconstructions directly from the per-voxel indexer
     output, bypassing tomographic recon.
@@ -1274,6 +1358,8 @@ def main():
     parser.add_argument('-mlemIter', type=int, required=False, default=50, help='Number of MLEM/OSEM iterations (only used when -reconMethod is mlem or osem). Default: 50.')
     parser.add_argument('-reindexScanPosTol', type=float, required=False, default=0.0,
                         help='Optional scan-position consistency tolerance (µm) for IndexerScanningOMP. 0 (default) = use the existing BeamSize/2 tolerance unchanged. When >0, the value is written into paramstest.txt at the params_rewrite stage so it applies to BOTH the first-pass indexing (which determines the grain map) and the mic-seeded re-indexing pass (which feeds refinement). Set tighter than BeamSize/2 to reject spurious cross-grain spotID assignments responsible for salt-pepper noise in pf-HEDM grain maps; set looser to be more permissive on noisy calibration. Requires re-running from at least -restartFrom params_rewrite to take effect on the first-pass indexer.')
+    parser.add_argument('-cwPottsLambda', type=float, required=False, default=0.0,
+                        help='If >0, applies confidence-weighted Potts (ICM) smoothing on the bayesian-fused grain ID map BEFORE the cullMinSize step. Per-voxel data term is scaled by the posterior margin (top1-top2)/max_post, so confident voxels are anchored and only ambiguous boundary voxels get pulled toward neighborhood majority. The result is microstructure-like grain shapes: salt-pepper specks merged into neighboring grains, smooth boundaries, fewer fragmented components. Behaves binary (off vs on); any λ ≥ ~2 converges to essentially the same fixed point — recommended default: 5. 0 (off) is the default. For best balance between cleaner shapes and preserving small grains, pair with -cullMinSize 3.')
     parser.add_argument('-cullMinSize', type=int, required=False, default=0,
                         help='If >0, drop connected components smaller than this many voxels per grain in the final pf-HEDM grain ID map (Recons/Full_recon_max_project_grID.tif), unassigning those voxels (-1). Justification: components below the beam resolution cannot be physically resolved as distinct grains. Defaults to 0 (off). Recommended: 5 for typical 1 µm scans. Independent geometric/confidence validation has shown that even very small components have well-supported indexer evidence, so this is a sub-resolution physical cull, not a regularizer — only use when sub-beam-size features should be treated as noise.')
     parser.add_argument('-osemSubsets', type=int, required=False, default=4, help='Number of ordered subsets for OSEM (only used when -reconMethod is osem). Default: 4.')
@@ -1335,6 +1421,7 @@ def main():
     useEM = args.useEM
     reindex_scan_pos_tol = float(getattr(args, 'reindexScanPosTol', 0.0) or 0.0)
     cull_min_size = int(getattr(args, 'cullMinSize', 0) or 0)
+    cw_potts_lambda = float(getattr(args, 'cwPottsLambda', 0.0) or 0.0)
 
     # sr-midas detection banner + flag validation (no-ops when package absent)
     runSR = int(getattr(args, 'runSR', 0) or 0)
@@ -2179,6 +2266,17 @@ def main():
 
                 max_id = np.argmax(all_recons, axis=0).astype(np.int32)
                 max_id[full_recon == 0] = -1
+
+                # Optional confidence-weighted Potts (ICM) post-process. Smooths
+                # the per-voxel grain map at ambiguous voxels (low posterior
+                # margin) toward neighborhood majority while anchoring confident
+                # voxels. Runs BEFORE the cull so cull operates on smoothed map.
+                if cw_potts_lambda > 0:
+                    logger.info(
+                        f"cwPottsLambda={cw_potts_lambda}: applying "
+                        f"confidence-weighted Potts smoothing")
+                    max_id = confidence_weighted_potts(
+                        all_recons, max_id, lam=cw_potts_lambda, max_iter=30)
 
                 # Optional sub-resolution cull: drop connected components below
                 # cull_min_size per grain. Defensible only when cull_min_size <=
