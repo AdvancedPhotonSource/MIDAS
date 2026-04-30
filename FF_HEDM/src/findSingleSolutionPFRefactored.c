@@ -126,6 +126,13 @@ typedef struct {
  * Computed once in main() from positions.csv via argsort. */
 static int *scan_to_spatial = NULL;
 
+/* Sorted (ascending) physical positions, indexed by spatial column. Used by
+ * the scan-position consistency filter in generate_sinograms_from_indexing
+ * to convert (row, col) image coords to (y_V, x_V) microns and the spot's
+ * file-order scanNr to its observed scan position via spatial_positions[
+ * scan_to_spatial[scanNr]]. Lifetime = program. */
+static double *spatial_positions = NULL;
+
 /* Comparator for argsort of positions (ascending). */
 static const double *_positions_for_sort = NULL;
 static int cmp_argsort_asc(const void *a, const void *b) {
@@ -298,6 +305,13 @@ int main(int argc, char *argv[]) {
     /* Invert: scan_to_spatial[fileIdx] = spatialIdx */
     for (int pi = 0; pi < nScans; pi++)
       scan_to_spatial[sortIdx[pi]] = pi;
+    /* Build sorted-position array for spatial-pos lookups in the
+     * scan-position consistency filter. */
+    spatial_positions = malloc(nScans * sizeof(double));
+    if (!spatial_positions)
+      fatal_error("Failed to allocate spatial_positions array");
+    for (int pi = 0; pi < nScans; pi++)
+      spatial_positions[pi] = positions[sortIdx[pi]];
     printf("Scan-to-spatial mapping computed from %s (%d scans)\n", posFN, nScans);
     for (int pi = 0; pi < nScans && pi < 6; pi++)
       printf("  scan %d (pos %.4f) -> spatial col %d\n", pi, positions[pi], scan_to_spatial[pi]);
@@ -1058,6 +1072,14 @@ SpotList process_spots(UniqueOrientationsResult *uniqueResult,
 
   size_t nAllSpots = 0;
 
+  /* Counters for diagnostic guard-rails. Misalignment between Spots.bin row N
+   * and the spot ID stored at column 4 indicates the IDs file was generated
+   * against a different Spots.bin (stale state, version mismatch, etc.); if
+   * every spot fails the alignment check the function returns silent empty
+   * output and downstream sinograms are 0-byte. We escalate at the end. */
+  size_t nInvalidIDs = 0;
+  size_t nMisaligned = 0;
+
   /* Process each grain */
   for (size_t i = 0; i < uniqueResult->nUniques; i++) {
     size_t thisVoxNr = uniqueResult->uniqueKeyArr[i * 5];
@@ -1094,6 +1116,7 @@ SpotList process_spots(UniqueOrientationsResult *uniqueResult,
         log_error("Invalid spot ID %d (range 1-%zu) at grain %zu, spot %zu, "
                   "total spots: %d",
                   IDArrThis[j], nSpotsAll, i, j, nSpots);
+        nInvalidIDs++;
         continue;
       }
 
@@ -1103,6 +1126,7 @@ SpotList process_spots(UniqueOrientationsResult *uniqueResult,
         log_error("Data is not aligned. Spot ID %d at index %zu doesn't match "
                   "expected value",
                   IDArrThis[j], spotIdx);
+        nMisaligned++;
         continue;
       }
 
@@ -1183,6 +1207,33 @@ SpotList process_spots(UniqueOrientationsResult *uniqueResult,
 
   printf("Total spots: %zu, Unique spots: %zu, Max spots per grain: %d\n",
          nAllSpots, nUniqueSpots, maxNHKLs);
+
+  if (nMisaligned > 0 || nInvalidIDs > 0) {
+    fprintf(stderr,
+            "[WARN] process_spots: %zu invalid spot IDs, %zu misaligned spots "
+            "(out of %zu processed). This indicates Spots.bin and "
+            "IndexBest_IDs_all.bin disagree.\n",
+            nInvalidIDs, nMisaligned, nAllSpots);
+  }
+
+  /* Guard-rail: escalate the silent-empty failure mode. Every spot was either
+   * skipped by validation or de-duplicated to nothing, so the SpotList we
+   * return has no usable contents and generate_sinograms would write 0-byte
+   * output files (sinos_<nGrs>_0_<nScans>.bin). Fail loudly so the operator
+   * notices instead of debugging empty TIFs hours later. */
+  if (nUniqueSpots == 0 || maxNHKLs == 0) {
+    free(uniqueSpots);
+    free(isNotUniqueSpot);
+    free(nrHKLsFilled);
+    fatal_error(
+        "process_spots produced no usable spots (nAllSpots=%zu, nUniqueSpots="
+        "%zu, maxNHKLs=%d, invalidIDs=%zu, misaligned=%zu). Sinograms would "
+        "be empty. Likely cause: stale Spots.bin / IndexBest_IDs_all.bin from "
+        "a prior run, or a MIDAS version mismatch between the indexer and "
+        "this tool. Re-run SaveBinDataScanning + IndexerScanningOMP from a "
+        "clean state.",
+        nAllSpots, nUniqueSpots, maxNHKLs, nInvalidIDs, nMisaligned);
+  }
 
   /* Save unique spots to file */
   char fnUniqueSpots[MAX_PATH_LEN];
@@ -1265,6 +1316,17 @@ void generate_sinograms(SpotList *spotList,
     if (nrHKLsPerGrain[i] > maxNHKLs) {
       maxNHKLs = nrHKLsPerGrain[i];
     }
+  }
+
+  /* Belt-and-suspenders: process_spots already escalates this case, but if a
+   * future change skips that path or passes in a spotList that was mutated
+   * to empty, fail here rather than silently allocating a zero-size sino. */
+  if (maxNHKLs == 0) {
+    free(nrHKLsPerGrain);
+    fatal_error("generate_sinograms: maxNHKLs is 0; spotList contains no "
+                "spots assigned to grains. Refusing to write empty sino "
+                "files (would be named sinos_%zu_0_%d.bin).",
+                uniqueResult->nUniques, nScans);
   }
 
   /* Allocate memory for sinograms */
@@ -1887,10 +1949,68 @@ void generate_sinograms_from_indexing(UniqueOrientationsResult *uniqueResult,
     const int *allIdsForVox = ConsolidatedReader_getIDs(idsReader, voxNr);
     int totalIdsForVox = idsReader->nSolutions[voxNr];
 
+    /* Sino assembly filters (env-overridable):
+     *   MIDAS_PF_SINO_CONF_MIN — per-candidate confidence threshold
+     *     (default 0.5; raised from the historical 0.01 which admitted
+     *      essentially every voxel-candidate including air-region matches
+     *      against the polycrystalline spot field).
+     *   MIDAS_PF_SINO_SCAN_TOL — scan-position consistency tolerance in
+     *     microns (default 1.5 ≈ one voxel for typical pf-HEDM step sizes;
+     *     set <= 0 to disable the filter, restoring pre-fix behaviour).
+     *
+     * The scan-position filter is the key physics: pf-HEDM uniquely
+     * provides the spot's observed scan position (from its scanNr in
+     * Spots.bin). For a candidate orientation at voxel V to legitimately
+     * have produced this spot, V must be illuminated at the spot's omega,
+     * which means the beam translation s_V(omega) = -x_V*cos + y_V*sin
+     * must equal +/- the spot's observed scan position (Friedel pair on
+     * either sign). Without this filter, the indexer's match-by-(omega,
+     * eta, ring) attribution leaks ~75% spurious cells into small grains'
+     * sinos in polycrystalline data, ruining downstream tomographic recon.
+     */
+    static int s_filt_loaded = 0;
+    static double s_conf_min = 0.5;
+    static double s_scan_tol = 1.5;
+    if (!s_filt_loaded) {
+      const char *envc = getenv("MIDAS_PF_SINO_CONF_MIN");
+      if (envc && *envc) {
+        double v = atof(envc);
+        if (v >= 0.0 && v <= 1.0) s_conf_min = v;
+      }
+      const char *envs = getenv("MIDAS_PF_SINO_SCAN_TOL");
+      if (envs && *envs) {
+        s_scan_tol = atof(envs);
+      }
+      printf("Sino assembly filters (sinoMode=1): conf>=%.3f%s, scan_tol=%.3f µm%s\n",
+             s_conf_min, envc ? " [env]" : " [default]",
+             s_scan_tol, envs ? " [env]" : " [default]");
+      if (s_scan_tol <= 0.0)
+        printf("  (scan-position filter DISABLED)\n");
+      s_filt_loaded = 1;
+    }
+
+    /* Voxel V's spatial position in microns. The voxel grid is laid out
+     * (row, col) = (y_index, x_index), and each axis uses the same sorted
+     * scan positions as the column axis. */
+    int v_row = voxNr / nScans;
+    int v_col = voxNr % nScans;
+    double x_V = spatial_positions ? spatial_positions[v_col] : 0.0;
+    double y_V = spatial_positions ? spatial_positions[v_row] : 0.0;
+
     /* Track cumulative ID offset across solutions within this voxel */
     int idOffset = 0;
 
-    /* For each candidate, check against each grain */
+    /* For each candidate orientation at this voxel, attribute its
+     * indexer-assigned spots to grain g iff:
+     *   (a) candidate confidence >= s_conf_min, and
+     *   (b) candidate orientation matches grain g within maxAng, and
+     *   (c) for each spot, the spot's observed scan position is
+     *       consistent with V being illuminated at the spot's omega
+     *       (within s_scan_tol, allowing the Friedel-pair sign flip).
+     *
+     * One voxel can contribute to multiple grains via different
+     * candidates — this preserves the multi-grain-per-voxel semantics
+     * needed for boundary disambiguation downstream. */
     for (int ci = 0; ci < nCandidates; ci++) {
       int nIDsThisSolution = (int)keysData[ci * CONSOLIDATED_KEY_COLS + 2];
 
@@ -1905,7 +2025,8 @@ void generate_sinograms_from_indexing(UniqueOrientationsResult *uniqueResult,
       if (valsData[ci * CONSOLIDATED_VALS_COLS + 14] > 0)
         confidence =
             valsData[ci * CONSOLIDATED_VALS_COLS + 15] / valsData[ci * CONSOLIDATED_VALS_COLS + 14];
-      if (confidence >= 0.01) {
+
+      if (confidence >= s_conf_min) {
         for (size_t g = 0; g < nGrains; g++) {
           double Axis[3], ang;
           GetMisOrientation(quatCand, &grainQuats[g * 4], Axis, &ang, sgNr);
@@ -1917,12 +2038,31 @@ void generate_sinograms_from_indexing(UniqueOrientationsResult *uniqueResult,
                 if (sid < 1 || sid > (int)nSpotsAll)
                   continue;
                 if (seenSpotID[g][sid])
-                  continue; /* deduplicate */
-                seenSpotID[g][sid] = true;
+                  continue; /* deduplicate within grain */
 
                 size_t idx = (size_t)(sid - 1);
                 if ((int)allSpots[SPOTS_ARRAY_COLS * idx + 4] != sid)
                   continue;
+
+                /* Scan-position consistency filter (the fix that makes
+                 * tomo recon work for small grains in polycrystalline
+                 * pf-HEDM data). */
+                if (s_scan_tol > 0.0 && spatial_positions) {
+                  double ome_S = allSpots[SPOTS_ARRAY_COLS * idx + 2];
+                  double cw = cos(ome_S * MIDAS_DEG2RAD);
+                  double sw = sin(ome_S * MIDAS_DEG2RAD);
+                  double s_V_at_ome = -x_V * cw + y_V * sw;
+                  int spotScanNr = (int)allSpots[SPOTS_ARRAY_COLS * idx + 9];
+                  double s_observed = spatial_positions[
+                      scan_to_spatial ? scan_to_spatial[spotScanNr]
+                                      : spotScanNr];
+                  if (fabs(s_V_at_ome - s_observed) > s_scan_tol &&
+                      fabs(s_V_at_ome + s_observed) > s_scan_tol) {
+                    continue;  /* spurious — neither direct nor Friedel match */
+                  }
+                }
+
+                seenSpotID[g][sid] = true;
 
                 /* Grow array if needed */
                 if (grainSpotCounts[g] >= grainSpotCaps[g]) {
@@ -2004,6 +2144,17 @@ void generate_sinograms_from_indexing(UniqueOrientationsResult *uniqueResult,
   /* --- Phase 3: Fill sinogram arrays --- */
   printf("Filling sinograms (nGrains=%zu, maxNHKLs=%d, nScans=%d)...\n",
          nGrains, maxNHKLs, nScans);
+
+  /* Guard-rail: zero collected spots across all grains means the
+   * indexing-mode path found no grain-assigned spots in IndexBest_IDs. */
+  if (maxNHKLs == 0) {
+    fatal_error(
+        "generate_sinograms_from_indexing: no spots collected for any of "
+        "%zu grains (maxNHKLs=0). Sinograms would be empty. Check that "
+        "IndexBest_IDs_all.bin is non-empty and contains solutions whose "
+        "orientation matches one of the unique grains.",
+        nGrains);
+  }
 
   size_t szSino = nGrains * maxNHKLs * nScans;
   double *sinoArr = calloc(szSino, sizeof(double));

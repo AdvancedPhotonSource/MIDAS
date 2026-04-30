@@ -195,31 +195,61 @@ def mlem(
     if len(valid_idx) == 0:
         return np.zeros((N, N))
 
-    # Sensitivity image: back-projection of ones (normalization factor)
-    ones_sino = np.ones_like(sino_valid)
-    sensitivity = back_project(ones_sino, angles_valid, N)
+    # Sensitivity image: back-projection of the measurement mask, NOT all-ones.
+    # For sparse pf-HEDM sinograms (most cells are 0 because that HKL only
+    # appears at certain scan positions), back_project(ones) overcounts
+    # coverage in image regions that no ray actually traverses, which drags
+    # the update ratio toward zero in unsampled regions and lets noise blow
+    # up cells in sampled regions. Mask-based sensitivity grounds each pixel
+    # in how many actual measurements constrain it.
+    mask_sino = (sino_valid > 0).astype(np.float64)
+    sensitivity = back_project(mask_sino, angles_valid, N)
+
+    # Image-space mask: pixels with no measurement support get pinned to 0.
+    # Without this, multiplicative updates leave them at the initial value
+    # (1.0 here) and they show up as a uniform background in the recon.
+    image_support = sensitivity > eps
     sensitivity = np.maximum(sensitivity, eps)
 
-    # Initial estimate
+    # Initial estimate, restricted to supported pixels.
     if init is not None:
         estimate = init.copy()
     else:
         estimate = np.ones((N, N), dtype=np.float64)
+    estimate = np.where(image_support, estimate, 0.0)
+
+    # Floor proj at the measured-data scale, not at machine epsilon. With
+    # raw-count sinograms (max ~1e4), ratio = sino/eps = 1e14 exploded the
+    # multiplicative update on sparse grains. proj_floor based on the data
+    # gives stable behavior whether sino is normalized or raw.
+    sino_scale = float(sino_valid.max()) if sino_valid.size else 1.0
+    proj_floor = max(eps, 1e-6 * sino_scale)
+
+    # Per-iteration update-factor clamp: prevents a single pathological
+    # ratio (one row with too few measured cells, ray geometry near the
+    # image edge, etc.) from blowing the recon to 1e+200 in three steps.
+    UPD_LO, UPD_HI = 0.1, 10.0
 
     for iteration in range(n_iter):
         # Forward project current estimate
         proj = forward_project(estimate, angles_valid)
-        proj = np.maximum(proj, eps)
+        proj = np.maximum(proj, proj_floor)
 
-        # Ratio
-        ratio = sino_valid / proj
+        # Ratio — only at measured cells. Unmeasured cells contribute 0 to
+        # the back-projection, matching the mask-based sensitivity above.
+        ratio = np.where(mask_sino > 0, sino_valid / proj, 0.0)
 
         # Back-project ratio
         correction = back_project(ratio, angles_valid, N)
 
-        # Update: multiplicative (preserves non-negativity)
-        estimate *= correction / sensitivity
+        # Multiplicative update, masked to image support, clamped per pixel.
+        update = correction / sensitivity
+        update = np.clip(update, UPD_LO, UPD_HI)
+        estimate = np.where(image_support, estimate * update, 0.0)
 
+    # Replace any residual NaN / inf produced by edge cases (e.g. a row that
+    # had a single nonzero cell whose ray exits the image).
+    estimate = np.nan_to_num(estimate, nan=0.0, posinf=0.0, neginf=0.0)
     return estimate
 
 
@@ -268,20 +298,34 @@ def osem(
     else:
         estimate = np.ones((N, N), dtype=np.float64)
 
+    # Image-space support across the FULL set of valid projections — pixels
+    # that no measured ray traverses get pinned to 0 (see mlem() comment).
+    full_mask = (sinogram[valid_idx] > 0).astype(np.float64)
+    full_sensitivity = back_project(full_mask, angles_deg[valid_idx], N)
+    image_support = full_sensitivity > eps
+    estimate = np.where(image_support, estimate, 0.0)
+
+    sino_scale = float(sinogram[valid_idx].max()) if len(valid_idx) else 1.0
+    proj_floor = max(eps, 1e-6 * sino_scale)
+    UPD_LO, UPD_HI = 0.1, 10.0
+
     for iteration in range(n_iter):
         for subset_idx in subsets:
             sino_sub = sinogram[subset_idx]
             angles_sub = angles_deg[subset_idx]
 
-            sensitivity = back_project(np.ones_like(sino_sub), angles_sub, N)
+            mask_sub = (sino_sub > 0).astype(np.float64)
+            sensitivity = back_project(mask_sub, angles_sub, N)
             sensitivity = np.maximum(sensitivity, eps)
 
             proj = forward_project(estimate, angles_sub)
-            proj = np.maximum(proj, eps)
+            proj = np.maximum(proj, proj_floor)
 
-            ratio = sino_sub / proj
+            ratio = np.where(mask_sub > 0, sino_sub / proj, 0.0)
             correction = back_project(ratio, angles_sub, N)
 
-            estimate *= correction / sensitivity
+            update = correction / sensitivity
+            update = np.clip(update, UPD_LO, UPD_HI)
+            estimate = np.where(image_support, estimate * update, 0.0)
 
-    return estimate
+    return np.nan_to_num(estimate, nan=0.0, posinf=0.0, neginf=0.0)

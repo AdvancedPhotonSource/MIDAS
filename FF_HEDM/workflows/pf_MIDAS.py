@@ -83,6 +83,258 @@ def save_sinogram_variants(topdir, nGrs, maxNHKLs, nScans, grainSpots, omegas):
     logging.getLogger('pf_midas').info(
         f"Saved 4 sinogram variants for {nGrs} grains to Sinos/")
 
+
+def _read_indexbest(topdir):
+    """Read consolidated indexer output. Returns (nVox, nSolArr, offArr, header,
+    allVals) — see IndexerScanningOMP for layout."""
+    consol_path = os.path.join(topdir, 'Output', 'IndexBest_all.bin')
+    with open(consol_path, 'rb') as f:
+        nVox = np.frombuffer(f.read(4), dtype=np.int32)[0]
+        nSolArr = np.frombuffer(f.read(4 * nVox), dtype=np.int32)
+        offArr = np.frombuffer(f.read(8 * nVox), dtype=np.int64)
+        header = 4 + 4 * nVox + 8 * nVox
+        allVals = np.frombuffer(f.read(), dtype=np.double)
+    return nVox, nSolArr, offArr, header, allVals
+
+
+def _orient_score_per_grain(topdir, sgnum, nScans, nGrs, max_ang_deg, min_conf):
+    """For each (voxel V, grain g), the orient_score is the highest
+    completeness ratio among V's indexer candidates whose orientation
+    matches grain g within max_ang_deg. Voxels at grain boundaries can
+    legitimately have non-zero scores for multiple grains.
+
+    Returns float32 array of shape (nGrs, nScans, nScans).
+    """
+    from calcMiso import GetMisOrientationAngleOMBatch
+
+    nVox, nSolArr, offArr, header, allVals = _read_indexbest(topdir)
+    n_vals_cols = 16
+
+    # Collect every candidate above min_conf with its OM and conf.
+    cand_OMs = []
+    cand_confs = []
+    cand_voxels = []
+    for v in range(nVox):
+        if nSolArr[v] == 0:
+            continue
+        dataOff = int((offArr[v] - header) // 8)
+        sols = allVals[dataOff:dataOff + nSolArr[v] * n_vals_cols].reshape(
+            nSolArr[v], n_vals_cols)
+        confs = sols[:, 15] / np.maximum(sols[:, 14], 1)
+        keep = confs >= min_conf
+        if not keep.any():
+            continue
+        for ci in np.where(keep)[0]:
+            cand_OMs.append(sols[ci, 2:11])
+            cand_confs.append(confs[ci])
+            cand_voxels.append(v)
+    if not cand_OMs:
+        return np.zeros((nGrs, nScans, nScans), dtype=np.float32)
+
+    cand_OMs = np.asarray(cand_OMs)
+    cand_confs = np.asarray(cand_confs)
+    cand_voxels = np.asarray(cand_voxels)
+    grain_OMs = np.genfromtxt(
+        os.path.join(topdir, 'UniqueOrientations.csv'), delimiter=' ')[:, 5:14]
+    max_ang_rad = np.deg2rad(max_ang_deg)
+
+    orient = np.zeros((nGrs, nScans * nScans), dtype=np.float32)
+    for g in range(nGrs):
+        angs = GetMisOrientationAngleOMBatch(
+            cand_OMs, np.tile(grain_OMs[g], (len(cand_OMs), 1)), sgnum).flatten()
+        ok = angs < max_ang_rad
+        if not ok.any():
+            continue
+        # For each voxel that has a matching candidate, take the max confidence
+        for cand_idx in np.where(ok)[0]:
+            v = cand_voxels[cand_idx]
+            c = cand_confs[cand_idx]
+            if c > orient[g, v]:
+                orient[g, v] = c
+    return orient.reshape(nGrs, nScans, nScans)
+
+
+def bayesian_fusion(all_recons, topdir, sgnum, nGrs,
+                    max_ang_deg=1.0, min_conf=0.5):
+    """Fuse the per-grain tomographic recon (shape prior) with the indexer's
+    per-voxel candidate confidences (orientation likelihood):
+
+        posterior(g, V) ∝ shape_score(g, V) × orient_score(g, V)
+
+    shape_score is the per-grain recon normalized to [0, 1] across its own
+    voxels (not across grains, so a small grain isn't drowned by a large one).
+    orient_score(g, V) is the highest completeness among V's candidates whose
+    OM is within max_ang_deg of grain g's OM.
+
+    This handles grain-boundary disambiguation where the original voxelmap
+    method (top candidate alone) fails: at a boundary the orient_score for
+    the two neighbouring grains is similarly high, but the shape_score
+    picks the side the voxel is geometrically on.
+
+    Returns array shape (nGrs, nScans, nScans), float32.
+    """
+    log = logging.getLogger('pf_midas')
+    nGrs_, nScans, _ = all_recons.shape
+    assert nGrs_ == nGrs
+    log.info(f"bayesian_fusion: nGrs={nGrs} nScans={nScans} "
+             f"max_ang={max_ang_deg}° min_conf={min_conf}")
+
+    # Normalize each per-grain recon by its own max — preserves relative
+    # density inside each grain, lets small grains compete with large.
+    shape = all_recons.astype(np.float32).copy()
+    for g in range(nGrs):
+        m = shape[g].max()
+        if m > 0:
+            shape[g] /= m
+
+    orient = _orient_score_per_grain(topdir, sgnum, nScans, nGrs,
+                                     max_ang_deg, min_conf)
+
+    posterior = (shape * orient).astype(np.float32)
+    for g in range(nGrs):
+        log.info(
+            f"  G{g}: shape>0 voxels={int((shape[g]>0).sum())}, "
+            f"orient>0 voxels={int((orient[g]>0).sum())}, "
+            f"posterior>0 voxels={int((posterior[g]>0).sum())}")
+    return posterior
+
+
+def mask_sino_by_assignment(sinos_main, omegas_arr, nrHKLs_arr, max_id,
+                            nGrs, nScans, spatial_pos, scan_tol=1.5):
+    """Step 5 helper: hard-assignment sino cleanup.
+
+    For each grain g and its existing per-grain sino, keep only cells
+    (omega_hkl_i, scan_j) where at least one voxel V assigned to grain g
+    (i.e. max_id[V] == g) projects to that cell:
+
+        |s_V(omega_hkl_i) - spatial_pos[scan_j]| < scan_tol
+            OR
+        |s_V(omega_hkl_i) + spatial_pos[scan_j]| < scan_tol     (Friedel)
+
+    where s_V(omega) = -x_V*cos(omega) + y_V*sin(omega).
+
+    This drops residual cells the C-side scan-pos filter couldn't catch
+    because at C-time we didn't yet have the hard voxel→grain assignment;
+    here we do (max_id from bayesian_fusion). The result feeds FBP again
+    for streak-free per-grain density TIFs.
+    """
+    log = logging.getLogger('pf_midas')
+    refined = np.zeros_like(sinos_main)
+    gid_2d = max_id  # (nScans, nScans)
+
+    for g in range(nGrs):
+        nSp = int(nrHKLs_arr[g])
+        if nSp == 0:
+            continue
+        sino_orig = sinos_main[g, :nSp, :]
+        th = omegas_arr[g, :nSp]
+        rows, cols = np.where(gid_2d == g)
+        if len(rows) == 0:
+            log.info(f"  step5 G{g}: no voxels assigned, sino zeroed")
+            continue
+        x_v = spatial_pos[cols]
+        y_v = spatial_pos[rows]
+        n_vox = len(x_v)
+
+        cos_w = np.cos(np.deg2rad(th))[:, None]      # (nSp, 1)
+        sin_w = np.sin(np.deg2rad(th))[:, None]
+        s_proj = -x_v[None, :] * cos_w + y_v[None, :] * sin_w  # (nSp, n_vox)
+
+        # Build (nSp, nScans) mask in voxel batches to bound memory.
+        scan_pos = spatial_pos[None, None, :]        # (1, 1, nScans)
+        mask = np.zeros((nSp, nScans), dtype=bool)
+        batch = 256
+        for vstart in range(0, n_vox, batch):
+            vend = min(vstart + batch, n_vox)
+            sp = s_proj[:, vstart:vend, None]        # (nSp, b, 1)
+            ok = (np.abs(sp - scan_pos) < scan_tol) | \
+                 (np.abs(-sp - scan_pos) < scan_tol)
+            mask |= ok.any(axis=1)
+        refined[g, :nSp, :] = sino_orig * mask
+        n_orig = int((sino_orig > 0).sum())
+        n_keep = int((refined[g, :nSp, :] > 0).sum())
+        log.info(
+            f"  step5 G{g}: {n_vox} assigned voxels, "
+            f"sino cells {n_orig} → {n_keep} ({100*n_keep/max(n_orig,1):.0f}%)")
+    return refined
+
+
+def voxelmap_recon(topdir, sgnum, nScans, nGrs, max_ang_deg=1.0, min_conf=0.5):
+    """Build per-grain reconstructions directly from the per-voxel indexer
+    output, bypassing tomographic recon.
+
+    For each voxel, take the highest-confidence indexer candidate, find which
+    of the unique-grain orientations its rotation matches within max_ang_deg
+    (using the symmetry-aware misorientation), and assign the voxel to that
+    grain when the candidate's completeness (matched/expected) is at least
+    min_conf. The per-grain TIF stores the candidate confidence at every
+    assigned voxel and zero elsewhere.
+
+    This is useful when the spotty pf-HEDM sinograms (each cell is the
+    intensity of a single Bragg spot, not a smooth line integral) prevent
+    tomographic recon from converging to localized grain shapes — the
+    indexer already supplies the per-voxel orientation map we want.
+
+    Returns
+    -------
+    all_recons : np.ndarray (nGrs, nScans, nScans), float32
+    """
+    log = logging.getLogger('pf_midas')
+
+    # Lazy import — utils path is added by main() before voxelmap_recon is called.
+    from calcMiso import GetMisOrientationAngleOMBatch
+
+    consol_path = os.path.join(topdir, 'Output', 'IndexBest_all.bin')
+    with open(consol_path, 'rb') as f:
+        nVox = np.frombuffer(f.read(4), dtype=np.int32)[0]
+        nSolArr = np.frombuffer(f.read(4 * nVox), dtype=np.int32)
+        offArr = np.frombuffer(f.read(8 * nVox), dtype=np.int64)
+        header = 4 + 4 * nVox + 8 * nVox
+        allVals = np.frombuffer(f.read(), dtype=np.double)
+
+    n_vals_cols = 16  # CONSOLIDATED_VALS_COLS in IndexerScanningOMP
+
+    top_OMs = np.zeros((nVox, 9))
+    top_conf = np.zeros(nVox)
+    for v in range(nVox):
+        if nSolArr[v] == 0:
+            continue
+        dataOff = int((offArr[v] - header) // 8)
+        sols = allVals[dataOff:dataOff + nSolArr[v] * n_vals_cols].reshape(
+            nSolArr[v], n_vals_cols)
+        confs = sols[:, 15] / np.maximum(sols[:, 14], 1)
+        bi = int(np.argmax(confs))
+        top_OMs[v] = sols[bi, 2:11]
+        top_conf[v] = confs[bi]
+
+    grain_OMs = np.genfromtxt(
+        os.path.join(topdir, 'UniqueOrientations.csv'), delimiter=' ')[:, 5:14]
+
+    max_ang_rad = np.deg2rad(max_ang_deg)
+    ang_to_grain = np.zeros((nVox, nGrs))
+    for g in range(nGrs):
+        ang_to_grain[:, g] = GetMisOrientationAngleOMBatch(
+            top_OMs, np.tile(grain_OMs[g], (nVox, 1)), sgnum).flatten()
+    best_g = np.argmin(ang_to_grain, axis=1)
+    best_ang = np.min(ang_to_grain, axis=1)
+    voxel_grain = np.where(
+        (best_ang < max_ang_rad) & (top_conf >= min_conf),
+        best_g, -1).astype(np.int32)
+
+    gid_map = voxel_grain.reshape(nScans, nScans)
+    conf_map = top_conf.reshape(nScans, nScans).astype(np.float32)
+
+    all_recons = np.zeros((nGrs, nScans, nScans), dtype=np.float32)
+    for g in range(nGrs):
+        all_recons[g] = np.where(gid_map == g, conf_map, 0.0)
+        log.info(
+            f"  voxelmap G{g}: {int((voxel_grain == g).sum())} voxels assigned")
+    log.info(
+        f"  voxelmap unassigned: {int((voxel_grain == -1).sum())} voxels "
+        f"(below {min_conf:.2f} confidence or no grain within {max_ang_deg:g}°)")
+    return all_recons
+
+
 # Set paths dynamically using script location
 def get_installation_dir():
     """Get the installation directory from the script's location."""
@@ -1018,8 +1270,12 @@ def main():
     parser.add_argument('-minThresh', type=int, required=False, default=-1, help='If you want to filter out peaks with intensity less than this number. -1 disables this. This is only used for filtering out peaksearch results for small peaks, peaks with maxInt smaller than this will be filtered out.')
     parser.add_argument('-sinoType', type=str, required=False, default='raw', choices=['raw', 'norm', 'abs', 'normabs'], help='Sinogram type to use for reconstruction (raw, norm, abs, normabs). Default: raw')
     parser.add_argument('-sinoSource', type=str, required=False, default='tolerance', choices=['indexing', 'tolerance'], help='Sinogram spot source: tolerance=match all spots by angular tolerance (default), indexing=use only spots from per-voxel indexing results (cleaner).')
-    parser.add_argument('-reconMethod', type=str, required=False, default='fbp', choices=['fbp', 'mlem', 'osem'], help='Sinogram reconstruction method: fbp=filtered back-projection via gridrec (default), mlem=Maximum Likelihood EM (handles sparse/missing angles natively), osem=Ordered Subsets EM (accelerated MLEM).')
+    parser.add_argument('-reconMethod', type=str, required=False, default='fbp', choices=['fbp', 'mlem', 'osem', 'voxelmap', 'bayesian'], help='Sinogram reconstruction method: fbp=filtered back-projection via gridrec (default), mlem=Maximum Likelihood EM, osem=Ordered Subsets EM, voxelmap=skip tomo and use per-voxel orientation map directly (clean for polycrystalline pf-HEDM but loses boundary disambiguation), bayesian=run FBP on the per-grain sinos (which now have a scan-position consistency filter inside generate_sinograms_from_indexing) then fuse with the indexer per-voxel orientation likelihood — posterior(g,V) ∝ shape_score(g,V) × orient_score(g,V), handles boundary disambiguation that voxelmap alone misses.')
     parser.add_argument('-mlemIter', type=int, required=False, default=50, help='Number of MLEM/OSEM iterations (only used when -reconMethod is mlem or osem). Default: 50.')
+    parser.add_argument('-reindexScanPosTol', type=float, required=False, default=0.0,
+                        help='Optional scan-position consistency tolerance (µm) for IndexerScanningOMP. 0 (default) = use the existing BeamSize/2 tolerance unchanged. When >0, the value is written into paramstest.txt at the params_rewrite stage so it applies to BOTH the first-pass indexing (which determines the grain map) and the mic-seeded re-indexing pass (which feeds refinement). Set tighter than BeamSize/2 to reject spurious cross-grain spotID assignments responsible for salt-pepper noise in pf-HEDM grain maps; set looser to be more permissive on noisy calibration. Requires re-running from at least -restartFrom params_rewrite to take effect on the first-pass indexer.')
+    parser.add_argument('-cullMinSize', type=int, required=False, default=0,
+                        help='If >0, drop connected components smaller than this many voxels per grain in the final pf-HEDM grain ID map (Recons/Full_recon_max_project_grID.tif), unassigning those voxels (-1). Justification: components below the beam resolution cannot be physically resolved as distinct grains. Defaults to 0 (off). Recommended: 5 for typical 1 µm scans. Independent geometric/confidence validation has shown that even very small components have well-supported indexer evidence, so this is a sub-resolution physical cull, not a regularizer — only use when sub-beam-size features should be treated as noise.')
     parser.add_argument('-osemSubsets', type=int, required=False, default=4, help='Number of ordered subsets for OSEM (only used when -reconMethod is osem). Default: 4.')
     parser.add_argument('-useEM', type=int, required=False, default=0,
                         help='Use EM spot-ownership for soft sinogram generation (requires doTomo=1). Default: 0 (off).')
@@ -1077,6 +1333,8 @@ def main():
     sinoSource = args.sinoSource
     sinoMode = 1 if sinoSource == 'indexing' else 0
     useEM = args.useEM
+    reindex_scan_pos_tol = float(getattr(args, 'reindexScanPosTol', 0.0) or 0.0)
+    cull_min_size = int(getattr(args, 'cullMinSize', 0) or 0)
 
     # sr-midas detection banner + flag validation (no-ops when package absent)
     runSR = int(getattr(args, 'runSR', 0) or 0)
@@ -1571,6 +1829,11 @@ def main():
                 if grainsFN:
                     paramsf.write(f'GrainsFile {grainsFN}\n')
                     logger.info(f"Added GrainsFile to paramstest.txt: {grainsFN}")
+                if reindex_scan_pos_tol > 0:
+                    paramsf.write(f'ScanPosTol {reindex_scan_pos_tol}\n')
+                    logger.info(
+                        f"params_rewrite: applied ScanPosTol={reindex_scan_pos_tol} µm "
+                        f"(IndexerScanningOMP only; default = BeamSize/2 when unset).")
             ph5.mark('params_rewrite')
             ph5.write_dataset('parameters/nScans_final', nScans)
             ph5.write_dataset('parameters/BeamSize_final', BeamSize)
@@ -1794,49 +2057,158 @@ def main():
                 all_recons = np.zeros((nGrs, nScans, nScans))
                 im_list = []
 
-                for grNr in range(nGrs):
-                    nSp = grainSpots[grNr]
-                    thetas = omegas[grNr, :nSp]
+                reconMethod = getattr(args, 'reconMethod', 'fbp')
 
-                    # Read sinogram from binary array (consistent grain ordering)
-                    sino = np.transpose(SinosVariant[grNr, :nSp, :])  # (nScans, nSp)
+                if reconMethod == 'voxelmap':
+                    # Skip the per-grain sinogram-based recon. Build all_recons
+                    # directly from the per-voxel orientation map. Sino TIFs
+                    # are still saved below for diagnostic continuity.
+                    logger.info("reconMethod=voxelmap: using per-voxel "
+                                "orientation map directly (no tomo recon).")
+                    all_recons = voxelmap_recon(topdir, sgnum, nScans, nGrs)
+                    for grNr in range(nGrs):
+                        nSp = grainSpots[grNr]
+                        thetas = omegas[grNr, :nSp]
+                        sino = np.transpose(SinosVariant[grNr, :nSp, :])
+                        Image.fromarray(sino).save(
+                            f'Sinos/sino_{sinoType}_grNr_{str(grNr).zfill(4)}.tif')
+                        Image.fromarray(np.transpose(Sinos[grNr, :nSp, :])).save(
+                            f'Sinos/sino_grNr_{str(grNr).zfill(4)}.tif')
+                        np.savetxt(
+                            f'Thetas/thetas_grNr_{str(grNr).zfill(4)}.txt',
+                            thetas, fmt='%.6f')
+                        recon = all_recons[grNr]
+                        Image.fromarray(recon).save(
+                            f'Recons/recon_grNr_{str(grNr).zfill(4)}.tif')
+                        im_list.append(Image.fromarray(recon))
+                else:
+                    for grNr in range(nGrs):
+                        nSp = grainSpots[grNr]
+                        thetas = omegas[grNr, :nSp]
 
-                    # Save TIFs for visualization and thetas
-                    Image.fromarray(sino).save(f'Sinos/sino_{sinoType}_grNr_{str(grNr).zfill(4)}.tif')
-                    Image.fromarray(np.transpose(Sinos[grNr, :nSp, :])).save(f'Sinos/sino_grNr_{str(grNr).zfill(4)}.tif')
-                    np.savetxt(f'Thetas/thetas_grNr_{str(grNr).zfill(4)}.txt', thetas, fmt='%.6f')
+                        # Read sinogram from binary array (consistent grain ordering)
+                        sino = np.transpose(SinosVariant[grNr, :nSp, :])  # (nScans, nSp)
 
-                    # Reconstruct: sino shape is (nScans, nSp), transpose to (nThetas, detXdim)
-                    sino_for_tomo = sino.T  # (nSp, nScans) = (nThetas, detXdim)
-                    reconMethod = getattr(args, 'reconMethod', 'fbp')
-                    if reconMethod == 'mlem':
-                        mlemIter = getattr(args, 'mlemIter', 50)
-                        recon = mlem_reconstruct(sino_for_tomo, thetas, n_iter=mlemIter)
-                        recon = recon[:nScans, :nScans].T  # transpose to match FBP spatial convention
-                    elif reconMethod == 'osem':
-                        mlemIter = getattr(args, 'mlemIter', 50)
-                        osemSubsets = getattr(args, 'osemSubsets', 4)
-                        recon = osem_reconstruct(sino_for_tomo, thetas, n_iter=mlemIter, n_subsets=osemSubsets)
-                        recon = recon[:nScans, :nScans].T  # transpose to match FBP spatial convention
-                    else:  # fbp (default)
+                        # Save TIFs for visualization and thetas
+                        Image.fromarray(sino).save(f'Sinos/sino_{sinoType}_grNr_{str(grNr).zfill(4)}.tif')
+                        Image.fromarray(np.transpose(Sinos[grNr, :nSp, :])).save(f'Sinos/sino_grNr_{str(grNr).zfill(4)}.tif')
+                        np.savetxt(f'Thetas/thetas_grNr_{str(grNr).zfill(4)}.txt', thetas, fmt='%.6f')
+
+                        # Reconstruct: sino shape is (nScans, nSp), transpose to (nThetas, detXdim)
+                        sino_for_tomo = sino.T  # (nSp, nScans) = (nThetas, detXdim)
+                        if reconMethod == 'mlem':
+                            mlemIter = getattr(args, 'mlemIter', 50)
+                            recon = mlem_reconstruct(sino_for_tomo, thetas, n_iter=mlemIter)
+                            recon = recon[:nScans, :nScans].T  # transpose to match FBP spatial convention
+                        elif reconMethod == 'osem':
+                            mlemIter = getattr(args, 'mlemIter', 50)
+                            osemSubsets = getattr(args, 'osemSubsets', 4)
+                            recon = osem_reconstruct(sino_for_tomo, thetas, n_iter=mlemIter, n_subsets=osemSubsets)
+                            recon = recon[:nScans, :nScans].T  # transpose to match FBP spatial convention
+                        else:  # fbp (default) or bayesian (uses fbp under the hood)
+                            recon_arr = run_tomo_from_sinos(
+                                sino_for_tomo, 'Tomo', thetas,
+                                shifts=0.0, filterNr=2, doLog=0,
+                                extraPad=0, autoCentering=1, numCPUs=1, doCleanup=1)
+                            recon_full = recon_arr[0, 0, :, :]  # (reconDim, reconDim)
+                            recon = recon_full[cropStart:cropEnd, cropStart:cropEnd]  # (nScans, nScans)
+                        recon = recon.T  # transpose to match voxel grid convention
+                        all_recons[grNr, :, :] = recon
+                        im_list.append(Image.fromarray(recon))
+                        Image.fromarray(recon).save(f'Recons/recon_grNr_{str.zfill(str(grNr), 4)}.tif')
+
+                # Bayesian fusion: multiply per-grain shape (recon) by per-voxel
+                # orientation likelihood from indexer candidates. The shape
+                # term comes from FBP on the scan-pos-filtered sino; the
+                # orient term ensures each voxel only contributes to grains
+                # whose orientation actually matches at least one of its
+                # indexer candidates within maxAng. This handles boundary
+                # disambiguation that voxelmap alone misses.
+                if reconMethod == 'bayesian':
+                    logger.info("reconMethod=bayesian: fusing FBP shape "
+                                "with indexer orientation likelihood.")
+                    fused = bayesian_fusion(all_recons, topdir, sgnum, nGrs)
+
+                    # Step 5: hard-assignment refinement. The bayesian posterior
+                    # already chooses the right grain at each voxel; now feed
+                    # that hard assignment back into the sino to drop cells
+                    # whose source voxel isn't in this grain, and re-run FBP.
+                    # This produces streak-free per-grain density TIFs.
+                    pos_for_step5 = np.sort(np.loadtxt(f'{topdir}/positions.csv'))
+                    fused_full = np.max(fused, axis=0)
+                    fused_max_id = np.argmax(fused, axis=0).astype(np.int32)
+                    fused_max_id[fused_full == 0] = -1
+
+                    logger.info("reconMethod=bayesian step 5: hard-assignment "
+                                "sino mask + re-FBP for streak-free density.")
+                    cleaned_sinos = mask_sino_by_assignment(
+                        Sinos, omegas, grainSpots, fused_max_id,
+                        nGrs, nScans, pos_for_step5, scan_tol=1.5)
+
+                    all_recons = np.zeros_like(fused)
+                    for grNr in range(nGrs):
+                        nSp_g = int(grainSpots[grNr])
+                        if nSp_g == 0:
+                            continue
+                        thetas_g = omegas[grNr, :nSp_g]
+                        sino_g = cleaned_sinos[grNr, :nSp_g, :]   # (nSp, nScans)
+                        sino_g_for_tomo = sino_g                  # (nThetas, detXdim)
+                        if (sino_g_for_tomo > 0).sum() == 0:
+                            continue
                         recon_arr = run_tomo_from_sinos(
-                            sino_for_tomo, 'Tomo', thetas,
+                            sino_g_for_tomo, 'Tomo', thetas_g,
                             shifts=0.0, filterNr=2, doLog=0,
                             extraPad=0, autoCentering=1, numCPUs=1, doCleanup=1)
-                        recon_full = recon_arr[0, 0, :, :]  # (reconDim, reconDim)
-                        recon = recon_full[cropStart:cropEnd, cropStart:cropEnd]  # (nScans, nScans)
-                    recon = recon.T  # transpose to match voxel grid convention
-                    all_recons[grNr, :, :] = recon
-                    im_list.append(Image.fromarray(recon))
-                    Image.fromarray(recon).save(f'Recons/recon_grNr_{str.zfill(str(grNr), 4)}.tif')
-                
+                        rec = recon_arr[0, 0, cropStart:cropEnd, cropStart:cropEnd]
+                        rec = rec.T   # match voxel-grid convention (preserve double-T per workflow)
+                        all_recons[grNr] = rec.astype(np.float32)
+
+                    # Re-fuse once with orient_score so the streak tails
+                    # outside any assigned grain get pruned.
+                    all_recons = bayesian_fusion(all_recons, topdir, sgnum, nGrs)
+
+                    im_list = []
+                    for grNr in range(nGrs):
+                        Image.fromarray(all_recons[grNr].astype(np.float32)
+                                        ).save(f'Recons/recon_grNr_{str(grNr).zfill(4)}.tif')
+                        im_list.append(Image.fromarray(all_recons[grNr].astype(np.float32)))
+
                 # Create full reconstruction
                 full_recon = np.max(all_recons, axis=0)
                 logger.info("Finding orientation candidate at each location")
-                
+
                 max_id = np.argmax(all_recons, axis=0).astype(np.int32)
                 max_id[full_recon == 0] = -1
-                
+
+                # Optional sub-resolution cull: drop connected components below
+                # cull_min_size per grain. Defensible only when cull_min_size <=
+                # the physical beam-resolution voxel count — components smaller
+                # than that cannot be resolved as distinct grains regardless of
+                # how strong the per-voxel indexer evidence appears.
+                if cull_min_size > 0:
+                    from scipy.ndimage import label as _cc_label
+                    nGrs_cur = int(max_id.max()) + 1 if (max_id >= 0).any() else 0
+                    n_dropped_total = 0
+                    n_dropped_per_g = []
+                    for g in range(nGrs_cur):
+                        m = (max_id == g)
+                        if not m.any():
+                            n_dropped_per_g.append(0)
+                            continue
+                        labels, _ = _cc_label(m, structure=np.ones((3, 3), int))
+                        sizes = np.bincount(labels.flatten())
+                        n_drop_g = 0
+                        for cid in range(1, len(sizes)):
+                            if sizes[cid] < cull_min_size:
+                                drop = (labels == cid)
+                                max_id[drop] = -1
+                                n_drop_g += int(drop.sum())
+                        n_dropped_per_g.append(n_drop_g)
+                        n_dropped_total += n_drop_g
+                    logger.info(
+                        f"cullMinSize={cull_min_size}: dropped {n_dropped_total} "
+                        f"sub-resolution component voxels (per grain: {n_dropped_per_g})")
+
                 # Save max projection
                 Image.fromarray(max_id).save('Recons/Full_recon_max_project_grID.tif')
                 Image.fromarray(full_recon).save('Recons/Full_recon_max_project.tif')
@@ -1867,7 +2239,10 @@ def main():
                         micF.write(f"0.0 0.0 0.0 {xThis:.6f} {yThis:.6f} 0.0 0.0 "
                                    f"{Euler[0]:.6f} {Euler[1]:.6f} {Euler[2]:.6f} 0.0 0.0\n")
 
-                # Add MicFile to paramstest.txt
+                # Add MicFile to paramstest.txt for the mic-seeded re-indexing
+                # pass. ScanPosTol (if set) was already written during
+                # params_rewrite so it applies to BOTH the first-pass and
+                # re-indexing passes.
                 with open(f'{topdir}/paramstest.txt', 'a') as paramsf:
                     paramsf.write(f'MicFile {micFNTomo}\n')
 
@@ -1916,7 +2291,10 @@ def main():
                 logger.info(f"Built SpotsToIndex.csv from tomo-seeded indexing: "
                             f"{nWritten}/{nVoxels} voxels")
 
-                # Remove MicFile line from paramstest.txt (so refinement doesn't re-seed)
+                # Remove MicFile from paramstest.txt so refinement doesn't
+                # re-seed. ScanPosTol (if set) is left in place — it's only
+                # consumed by IndexerScanningOMP and is harmlessly ignored by
+                # the refinement tools.
                 with open(f'{topdir}/paramstest.txt', 'r') as f:
                     paramLines = f.readlines()
                 with open(f'{topdir}/paramstest.txt', 'w') as f:

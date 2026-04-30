@@ -102,6 +102,12 @@ struct TParams {
   int RingsToReject[MAX_N_RINGS];
   int nRingsToRejectCalc;
   int RingToIndex;
+  // Optional scan-position consistency tolerance (µm). When >0, replaces the
+  // default BeamSize/2 in both the seed-spot test and the per-spot match
+  // inside CompareSpots. Lets pf-HEDM tighten/relax per-voxel scan-pos
+  // filtering at the mic-seeded re-indexing pass without changing default
+  // first-pass behavior. <=0 (default) preserves the historical BeamSize/2.
+  RealType ScanPosTol;
 };
 
 size_t n_spots = 0;
@@ -444,11 +450,13 @@ void CompareSpots(RealType **TheorSpots, int nTheorSpots, RealType RefRad,
     Pos += iOme;
     size_t nspots = ndata[Pos * 2];
     size_t DataPos = ndata[Pos * 2 + 1];
+    RealType scanTol =
+        (Params->ScanPosTol > 0) ? Params->ScanPosTol : (BeamSize / 2);
     for (iSpot = 0; iSpot < nspots; iSpot++) {
       spotRow = data[(DataPos + iSpot) * 2 + 0];
       scannrobs = data[(DataPos + iSpot) * 2 + 1];
       ySpot = ypos[scannrobs];
-      if (fabs(yRot - ySpot) < BeamSize / 2) {
+      if (fabs(yRot - ySpot) < scanTol) {
         if (fabs(TheorSpots[sp][13] - ObsSpotsLab[spotRow * 10 + 8]) <
             MarginRadial) {
           if (fabs(TheorSpots[sp][12] - ObsSpotsLab[spotRow * 10 + 6]) <
@@ -761,6 +769,7 @@ int ReadParams(char FileName[], struct TParams *Params) {
   int NoRingNumbers = 0;
   Params->NrOfRings = 0;
   Params->NoOfOmegaRanges = 0;
+  Params->ScanPosTol = 0.0;  // 0 (or negative) => fall back to BeamSize/2.
   fp = fopen(FileName, "r");
   if (fp == NULL) {
     printf("Cannot open file: %s.\n", FileName);
@@ -966,6 +975,12 @@ int ReadParams(char FileName[], struct TParams *Params) {
     cmpres = strncmp(line, str, strlen(str));
     if (cmpres == 0) {
       sscanf(line, "%s %d", dummy, &(Params->UseFriedelPairs));
+      continue;
+    }
+    str = "ScanPosTol ";
+    cmpres = strncmp(line, str, strlen(str));
+    if (cmpres == 0) {
+      sscanf(line, "%s %lf", dummy, &(Params->ScanPosTol));
       continue;
     }
     str = "OutputFolder ";
@@ -1451,6 +1466,12 @@ int main(int argc, char *argv[]) {
          Params.Hbeam);
   printf("║    BeamSize        : %-10.4f                            ║\n",
          BeamSize);
+  if (Params.ScanPosTol > 0)
+    printf("║    ScanPosTol      : %-10.4f µm  (overrides BeamSize/2) ║\n",
+           Params.ScanPosTol);
+  else
+    printf("║    ScanPosTol      : %-10.4f µm  (default = BeamSize/2) ║\n",
+           BeamSize / 2);
   printf("║                                                            ║\n");
   printf("║  INDEXING                                                  ║\n");
   printf("║    NrOfRings       : %-6d                                ║\n",
@@ -1760,11 +1781,12 @@ int main(int argc, char *argv[]) {
         if (stride < 1) stride = 1;
         if ((thisRowNr - startRowNr) % stride == 0)
           printf("  Processing voxel %d/%d ...\n", thisRowNr - startRowNr, endRowNr - startRowNr);
+        RealType seedTol =
+            (Params.ScanPosTol > 0) ? Params.ScanPosTol : (BeamSize / 2);
         for (idnr = startRowNrSp; idnr <= endRowNrSp; idnr++) {
           thisID = (int)ObsSpotsLab[idnr * 10 + 4];
           newY = xThis * spotSinOme[idnr] + yThis * spotCosOme[idnr];
-          if (fabs(newY - ypos[(int)ObsSpotsLab[idnr * 10 + 9]]) <=
-              BeamSize / 2) {
+          if (fabs(newY - ypos[(int)ObsSpotsLab[idnr * 10 + 9]]) <= seedTol) {
             DoIndexing(thisID, thisRowNr, xThis, yThis, 0, Params, idnr, acc,
                        &scratch);
           }
