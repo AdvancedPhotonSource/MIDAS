@@ -26,6 +26,16 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--output", "-o", type=Path, default=None, help="CSV output path (default: stdout)")
     g.add_argument("--ext", default="", help="Setting extension (sginfo extension code)")
 
+    z = sub.add_parser(
+        "zarr",
+        help="Drop-in replacement for GetHKLListZarr. Reads params from a "
+             "MIDAS Zarr archive and writes the legacy 11-column hkls.csv.",
+    )
+    z.add_argument("zarr_path", help="Path to the MIDAS Zarr archive (.zip).")
+    z.add_argument("--result-folder", default=None,
+                   help="Override the result folder (default: ResultFolder from "
+                        "the Zarr archive, falling back to the archive's parent dir).")
+
     sub.add_parser("list", help="List all 230 space groups in the canonical table")
 
     info = sub.add_parser("info", help="Print space group info (operations, centering, Laue)")
@@ -76,6 +86,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.ops:
             for i, op in enumerate(sg.operations):
                 print(f"  {i + 1:3d}: {op.to_xyz()}")
+        return 0
+
+    if args.cmd == "zarr":
+        from .zarr_compat import generate_hkls_from_zarr
+        out = generate_hkls_from_zarr(args.zarr_path, result_folder=args.result_folder)
+        print(f"Wrote hkls.csv to {out}", file=sys.stderr)
         return 0
 
     if args.cmd == "gen":

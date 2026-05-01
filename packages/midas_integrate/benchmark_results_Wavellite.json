@@ -1,0 +1,52 @@
+{
+  "host_info": {
+    "host": "Wavellite",
+    "platform": "macOS-14.8.5-arm64-arm-64bit",
+    "python": "3.12.2",
+    "midas_integrate_version": "0.1.0",
+    "n_threads_env": 10,
+    "cpu_count": 10,
+    "torch_version": "2.11.0",
+    "torch_threads": 8,
+    "cuda_device_count": 0
+  },
+  "config": {
+    "device": "cpu",
+    "dtype": "float32",
+    "mode": "floor",
+    "image_dtype": "uint16",
+    "rbin": 1.0,
+    "eta_bin": 5.0,
+    "n_warmup": 2,
+    "n_iter": 5,
+    "detectors": [
+      "eiger2_500k"
+    ]
+  },
+  "midas_integrate": [
+    {
+      "tool": "midas-integrate",
+      "detector": "eiger2_500k",
+      "device": "cpu",
+      "dtype": "float32",
+      "mode": "floor",
+      "n_pixels_y": 1028,
+      "n_pixels_z": 512,
+      "mpx": 0.526336,
+      "n_r": 565,
+      "n_eta": 72,
+      "n_entries": 1251204,
+      "build_map_ms": 850.9446670068428,
+      "build_csr_ms": 90.92737500031944,
+      "median_ms": 8.393958996748552,
+      "p95_ms": 9.768116605118848,
+      "min_ms": 7.898250012658536,
+      "max_ms": 9.804625005926937,
+      "fps": 119.13329578895438,
+      "n_warmup": 2,
+      "n_iter": 5,
+      "with_variance": false
+    }
+  ],
+  "pyfai": []
+}

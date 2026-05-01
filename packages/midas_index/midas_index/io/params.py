@@ -70,7 +70,13 @@ def read_params(path: str | Path) -> IndexerParams:
             stripped = line.lstrip()
             if stripped.startswith("#"):
                 continue
-            tokens = stripped.split()
+            # The C ``FitSetupZarr`` writer emits ``key value;`` lines (trailing
+            # semicolons on numerics). Strip ``;`` from each token so the float
+            # / int conversions below work transparently for both writers.
+            tokens = [t.rstrip(";") for t in stripped.split()]
+            tokens = [t for t in tokens if t]
+            if not tokens:
+                continue
             key = tokens[0]
             args = tokens[1:]
 

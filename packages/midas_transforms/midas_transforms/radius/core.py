@@ -62,9 +62,11 @@ def _filter_and_compute_radius(
         powder_int : (R,) — per-ring averaged powder intensity (after /n_frames).
         m_hkl : (R,) — count of hkl entries hitting each configured ring.
 
-    The ring filter uses ``first match wins`` (deterministic by ring-table order),
-    matching the C code's iteration order. Spots whose radius matches no ring
-    within ``Width`` are dropped.
+    Per ``CalcRadiusAllZarr.c:347-394``, the C code increments its output
+    counter inside the per-ring loop, so a spot whose radius lies within
+    ``Width`` of two rings emits a row per matching ring (with a fresh
+    sequential SpotID for each). We replicate that here: every (spot, ring)
+    pair where ``|R_obs - ring_rad| < width`` produces one output row.
     """
     device = result_arr.device
     dtype = result_arr.dtype
@@ -77,22 +79,26 @@ def _filter_and_compute_radius(
     # 12=Radius, 13=Eta, 14=RawSumIntensity, 15=maskTouched, 16=FitRMSE
     R_obs_um = result_arr[:, 12] * px_um  # observed radius in µm
 
-    # Ring assignment via first-match argmin within the |diff|<width window.
-    # ``ring_radii_um`` and ``R_obs_um`` are both in µm.
+    # Per-spot, per-ring window: emit a row per matching pair.
     rad_um = ring_radii_um.to(device=device, dtype=dtype)
-    diff = (R_obs_um.unsqueeze(1) - rad_um.unsqueeze(0)).abs()  # (N, R)
+    diff = (R_obs_um.unsqueeze(1) - rad_um.unsqueeze(0)).abs()  # (N_in, R)
     in_window = diff < width_px
-    has_match = in_window.any(dim=1)
-    # First-match index: argmax on bool returns first True position.
-    first_match = torch.argmax(in_window.to(torch.int8), dim=1)
-    sel = has_match
-    spot_match = first_match[sel]
-    spots_in = result_arr[sel]
-    N_out = spots_in.shape[0]
 
-    if N_out == 0:
+    # All (spot_idx, ring_idx) pairs where the spot radius matches a ring.
+    # Iteration order (spot_idx ascending, then ring_idx ascending) matches
+    # the C code's nested loop ``for (line in input) for (i in 0..nRings)``.
+    pair_idx = torch.nonzero(in_window, as_tuple=False)        # (N_pairs, 2)
+    if pair_idx.shape[0] == 0:
         empty24 = torch.empty((0, 24), dtype=dtype, device=device)
-        return empty24, torch.zeros(R, dtype=dtype, device=device), torch.zeros(R, dtype=torch.int64, device=device)
+        return (
+            empty24,
+            torch.zeros(R, dtype=dtype, device=device),
+            torch.zeros(R, dtype=torch.int64, device=device),
+        )
+    spot_idx = pair_idx[:, 0]
+    spot_match = pair_idx[:, 1]
+    spots_in = result_arr[spot_idx]                            # (N_pairs, 17)
+    N_out = spots_in.shape[0]
 
     Eta = spots_in[:, 13]
     Omega = spots_in[:, 2]
@@ -100,12 +106,12 @@ def _filter_and_compute_radius(
     MaxOme = spots_in[:, 7]
     Radius = spots_in[:, 12]
 
-    # TopLayer filter: drop near-equator spots when active.
+    # TopLayer filter: drop near-equator (|Eta|<90) pairs.
     if top_layer:
         mask = torch.abs(Eta) >= 90.0
-        sel_idx = torch.nonzero(sel, as_tuple=False).squeeze(1)[mask]
         spots_in = spots_in[mask]
         spot_match = spot_match[mask]
+        spot_idx = spot_idx[mask]
         Eta = Eta[mask]
         Omega = Omega[mask]
         MinOme = MinOme[mask]
@@ -299,6 +305,13 @@ def calc_radius(
         device=dev, dtype=dt
     )
 
+    # Vsample / DiscModel / DiscArea: explicit args win over the Zarr archive,
+    # but if the caller left them at the default (0), fall back to whatever
+    # ``read_zarr_params`` parsed. C reads these straight from the Zarr.
+    eff_Vsample = Vsample if Vsample else float(getattr(zarr_params, "Vsample", 0.0))
+    eff_DiscModel = DiscModel if DiscModel else int(getattr(zarr_params, "DiscModel", 0))
+    eff_DiscArea = DiscArea if DiscArea else float(getattr(zarr_params, "DiscArea", 0.0))
+
     out, powder_int, _mhkl_default = _filter_and_compute_radius(
         spots_t,
         ring_numbers=rn_t,
@@ -309,9 +322,9 @@ def calc_radius(
         OmegaStep=zarr_params.OmegaStep if zarr_params.OmegaStep else 1.0,
         Hbeam=zarr_params.Hbeam,
         Rsample=zarr_params.Rsample,
-        Vsample=Vsample,
-        DiscModel=DiscModel,
-        DiscArea=DiscArea,
+        Vsample=eff_Vsample,
+        DiscModel=eff_DiscModel,
+        DiscArea=eff_DiscArea,
         n_frames=n_frames,
         top_layer=top_layer,
     )

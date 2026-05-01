@@ -42,6 +42,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--device", choices=["cpu", "cuda", "mps"], default=None)
     parser.add_argument("--dtype", choices=["float32", "float64"], default=None)
+    parser.add_argument(
+        "--group-size", type=int, default=None,
+        help="Seeds packed into a single forward+match batch. Smaller means "
+             "less peak memory, larger means more throughput. Default "
+             "auto-picks per device (cuda=64, mps=8, cpu=8). Overrides "
+             "env MIDAS_INDEX_GROUP_SIZE.",
+    )
     parser.add_argument("--version", action="version", version=f"midas-index {__version__}")
     return parser
 
@@ -76,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
         n_blocks=args.n_blocks,
         n_spots_to_index=n_total,
         num_procs=args.num_procs,
+        seed_group_size=args.group_size,
     )
 
     # Build a spot_id -> offset map (offset is the row in SpotsToIndex.csv).

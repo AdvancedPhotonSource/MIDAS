@@ -118,6 +118,7 @@ class Indexer:
         n_blocks: int = 1,
         n_spots_to_index: int | None = None,
         num_procs: int = 1,
+        seed_group_size: int | None = None,
     ) -> "IndexerResult":
         """Run the indexer on `[block_nr/n_blocks]` of the seed list."""
         from .pipeline import IndexerContext, run_block
@@ -143,4 +144,5 @@ class Indexer:
         spot_ids = torch.as_tensor(obs["spot_ids"], dtype=torch.int64)
         if n_spots_to_index is not None:
             spot_ids = spot_ids[:n_spots_to_index]
-        return run_block(ctx, spot_ids, block_nr=block_nr, n_blocks=n_blocks)
+        return run_block(ctx, spot_ids, block_nr=block_nr, n_blocks=n_blocks,
+                         seed_group_size=seed_group_size)

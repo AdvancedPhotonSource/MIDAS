@@ -43,8 +43,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Override the Zarr-stored doPeakFit (0|1)",
     )
     p.add_argument(
-        "--device", choices=["cpu", "cuda"], default=None,
-        help="Compute device (default: cuda if available, else cpu)",
+        "--device", choices=["cpu", "cuda", "mps"], default=None,
+        help="Compute device. Default auto-detects: cuda > mps > cpu. "
+             "MPS forces float32 (Apple's MPS backend has no float64 support).",
     )
     p.add_argument(
         "--dtype", choices=["float32", "float64"], default="float64",
@@ -92,7 +93,12 @@ def main(argv: list[str] | None = None) -> int:
 
     device = args.device
     if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
     print(f"Device: {device}, dtype: {args.dtype}")
 
     summary = run(

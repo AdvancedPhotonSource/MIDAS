@@ -67,6 +67,14 @@ class CSRGeometry:
         csr_gradient: same as ``csr_bilinear`` but evaluated at the
             gradient-corrected coordinates.
 
+        csr_floor_sq, csr_bilinear_sq, csr_gradient_sq: per-mode CSRs whose
+            values are the element-wise squares of the corresponding
+            integration matrices. Used by ``integrate_with_variance`` to
+            propagate per-pixel variance under the assumption of
+            uncorrelated pixels: ``Var(I_b) = Σ_l W_bl² · Var(I_l)``.
+            ``None`` when ``compute_variance=False`` was passed to
+            ``build_csr`` (default).
+
         area_per_bin: dense, shape (n_bins,) — Σ areaWeight per bin, used
             as the normalizer when ``normalize=True``.
 
@@ -84,6 +92,9 @@ class CSRGeometry:
     n_pixels_z: int
     bc_y: float = 0.0
     bc_z: float = 0.0
+    csr_floor_sq: Optional[torch.Tensor] = None
+    csr_bilinear_sq: Optional[torch.Tensor] = None
+    csr_gradient_sq: Optional[torch.Tensor] = None
 
     @property
     def n_bins(self) -> int:
@@ -224,6 +235,7 @@ def build_csr(
     dtype: torch.dtype = torch.float32,
     bc_y: float = 0.0, bc_z: float = 0.0,
     build_modes: tuple[str, ...] = ("floor", "bilinear", "gradient"),
+    compute_variance: bool = False,
 ) -> CSRGeometry:
     """Pack a PixelMap into precomputed CSR matrices for fast integration.
 
@@ -236,6 +248,11 @@ def build_csr(
         build_modes: which CSR matrices to precompute. Default builds all
             three. Pass e.g. ``('floor',)`` to skip the bilinear ones if you
             know you won't use them — saves ~3× memory for the CSR.
+        compute_variance: if True, also build a squared-weight CSR for each
+            requested mode. The squared CSRs share the sparsity pattern of
+            the originals; values are element-wise squares of the canonical
+            (sum-coalesced) per-(bin, pixel) weights. Doubles the precomputed
+            CSR memory but makes ``integrate_with_variance`` available.
     """
     expected_bins = n_r * n_eta
     if pixmap.n_bins != expected_bins:
@@ -327,6 +344,10 @@ def build_csr(
 
     area_per_bin_t = torch.from_numpy(area_per_bin).to(device=device, dtype=dtype)
 
+    csr_floor_sq = _square_csr(csr_floor) if compute_variance and "floor" in build_modes else None
+    csr_bilinear_sq = _square_csr(csr_bilinear) if compute_variance and "bilinear" in build_modes else None
+    csr_gradient_sq = _square_csr(csr_gradient) if compute_variance and "gradient" in build_modes else None
+
     return CSRGeometry(
         csr_floor=csr_floor,
         csr_bilinear=csr_bilinear,
@@ -335,6 +356,34 @@ def build_csr(
         n_r=n_r, n_eta=n_eta,
         n_pixels_y=n_pixels_y, n_pixels_z=n_pixels_z,
         bc_y=bc_y, bc_z=bc_z,
+        csr_floor_sq=csr_floor_sq,
+        csr_bilinear_sq=csr_bilinear_sq,
+        csr_gradient_sq=csr_gradient_sq,
+    )
+
+
+def _square_csr(sp: torch.Tensor) -> torch.Tensor:
+    """Return a torch CSR with the same indptr/indices but values squared.
+
+    The input CSR's values are the canonical per-(bin, pixel) weights after
+    sum_duplicates() coalesced any expansion (e.g. bilinear's 4-corner fan-out).
+    For uncorrelated pixels, ``Var(Σ_l W_bl·I_l) = Σ_l W_bl²·Var(I_l)``,
+    so the variance SpMV uses the squared values against the per-pixel
+    variance vector.
+    """
+    if sp._nnz() == 0:
+        return torch.sparse_csr_tensor(
+            sp.crow_indices().clone(),
+            sp.col_indices().clone(),
+            sp.values().clone(),
+            size=sp.shape,
+        )
+    vals_sq = sp.values() * sp.values()
+    return torch.sparse_csr_tensor(
+        sp.crow_indices().clone(),
+        sp.col_indices().clone(),
+        vals_sq,
+        size=sp.shape,
     )
 
 
@@ -411,6 +460,94 @@ def integrate(
     return out.reshape(geom.n_r, geom.n_eta)
 
 
+def integrate_with_variance(
+    image: torch.Tensor,
+    geom: CSRGeometry,
+    *,
+    mode: str = "floor",
+    normalize: bool = True,
+    variance_image: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Integrate one frame and propagate per-pixel variance.
+
+    Returns ``(intensity, variance)``. Both are 2D tensors of shape
+    ``(n_r, n_eta)``.
+
+    Args:
+        image: detector image, shape (n_pixels_z, n_pixels_y) or flat.
+        geom: output of ``build_csr(..., compute_variance=True)``.
+        mode: 'floor' | 'bilinear' | 'gradient' — see ``integrate``.
+        normalize: divide intensity by Σ areaWeight per bin (and variance
+            by the square of that quantity, so the propagation matches the
+            pyFAI/azint convention ``I = Σ(w·I/C) / Σw``).
+        variance_image: per-pixel variance map matching ``image.shape``.
+            If None, Poisson statistics are assumed and the image itself
+            is used as the variance vector (``Var(I_l) = I_l``). For
+            calibrated detectors with explicit gain/read-noise models, pass
+            the appropriate variance map.
+
+    The returned variance is the propagated bin variance under the
+    assumption of *uncorrelated* per-pixel measurements. For most
+    photon-counting and integrating detectors this is the standard
+    assumption; for detectors with significant inter-pixel charge sharing
+    a correlation correction must be applied externally.
+    """
+    if image.ndim == 2:
+        image_flat = image.reshape(-1)
+    else:
+        image_flat = image
+    expected = geom.n_pixels_y * geom.n_pixels_z
+    if image_flat.numel() != expected:
+        raise ValueError(
+            f"image numel {image_flat.numel()} != n_pixels {expected}"
+        )
+    image_flat = image_flat.to(dtype=geom.dtype, device=geom.device)
+
+    if mode == "floor":
+        sp = geom.csr_floor
+        sp_sq = geom.csr_floor_sq
+    elif mode == "bilinear":
+        sp = geom.csr_bilinear
+        sp_sq = geom.csr_bilinear_sq
+    elif mode == "gradient":
+        sp = geom.csr_gradient
+        sp_sq = geom.csr_gradient_sq
+    else:
+        raise ValueError(f"unknown integration mode {mode!r}")
+    if sp_sq is None:
+        raise RuntimeError(
+            f"build_csr was called without compute_variance=True (mode={mode!r}); "
+            "rebuild with compute_variance=True to use integrate_with_variance."
+        )
+
+    if variance_image is None:
+        var_flat = image_flat
+    else:
+        if variance_image.ndim == 2:
+            var_flat = variance_image.reshape(-1)
+        else:
+            var_flat = variance_image
+        if var_flat.numel() != expected:
+            raise ValueError(
+                f"variance_image numel {var_flat.numel()} != n_pixels {expected}"
+            )
+        var_flat = var_flat.to(dtype=geom.dtype, device=geom.device)
+
+    raw_int = torch.matmul(sp, image_flat.unsqueeze(1)).squeeze(1)
+    raw_var = torch.matmul(sp_sq, var_flat.unsqueeze(1)).squeeze(1)
+
+    if normalize:
+        valid = geom.area_per_bin > AREA_THRESHOLD
+        denom = torch.clamp(geom.area_per_bin, min=AREA_THRESHOLD)
+        intensity = torch.where(valid, raw_int / denom, torch.zeros_like(raw_int))
+        variance = torch.where(valid, raw_var / (denom * denom), torch.zeros_like(raw_var))
+    else:
+        intensity = raw_int
+        variance = raw_var
+    return (intensity.reshape(geom.n_r, geom.n_eta),
+            variance.reshape(geom.n_r, geom.n_eta))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 1D profile reductions
 # ─────────────────────────────────────────────────────────────────────────────
@@ -449,6 +586,50 @@ def profile_1d(
         )
     else:
         raise ValueError(f"unknown profile_1d mode {mode!r}")
+
+
+def profile_1d_with_variance(
+    int2d: torch.Tensor,
+    var2d: torch.Tensor,
+    geom: CSRGeometry,
+    *,
+    mode: str = "area_weighted",
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Reduce 2D (R, Eta) intensity + variance to 1D radial profile.
+
+    Returns ``(I_1d, Var_1d)``, both shape (n_r,).
+
+    For ``mode='area_weighted'``:
+        I_1d(R)   = Σ_η (A·I) / Σ_η A
+        Var_1d(R) = Σ_η (A² · Var) / (Σ_η A)²
+
+    The denominator is squared so that σ_1d propagates correctly through
+    the area-weighted mean. ``simple_mean`` divides Var by N² where N is
+    the number of valid η bins for that R.
+    """
+    area_2d = geom.area_per_bin.reshape(geom.n_r, geom.n_eta)
+    valid = area_2d > AREA_THRESHOLD
+    if mode == "area_weighted":
+        area_v = area_2d * valid
+        weighted_sum = (int2d * area_v).sum(dim=1)
+        weighted_var = (var2d * area_v * area_v).sum(dim=1)
+        area_sum = area_v.sum(dim=1)
+        denom = torch.clamp(area_sum, min=AREA_THRESHOLD)
+        ok = area_sum > AREA_THRESHOLD
+        I = torch.where(ok, weighted_sum / denom, torch.zeros_like(weighted_sum))
+        V = torch.where(ok, weighted_var / (denom * denom), torch.zeros_like(weighted_var))
+        return I, V
+    if mode == "simple_mean":
+        valid_f = valid.to(int2d.dtype)
+        sum_int = (int2d * valid_f).sum(dim=1)
+        sum_var = (var2d * valid_f).sum(dim=1)
+        n_valid = valid_f.sum(dim=1)
+        denom = torch.clamp(n_valid, min=1.0)
+        ok = n_valid > 0
+        I = torch.where(ok, sum_int / denom, torch.zeros_like(sum_int))
+        V = torch.where(ok, sum_var / (denom * denom), torch.zeros_like(sum_var))
+        return I, V
+    raise ValueError(f"unknown profile_1d_with_variance mode {mode!r}")
 
 
 def r_axis(*, n_r: int, RMin: float, RBinSize: float) -> np.ndarray:

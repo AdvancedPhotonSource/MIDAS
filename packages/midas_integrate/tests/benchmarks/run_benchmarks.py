@@ -57,7 +57,13 @@ if str(_PKG_ROOT) not in sys.path:
 from midas_integrate import __version__
 from midas_integrate.params import IntegrationParams
 from midas_integrate.detector_mapper import build_map
-from midas_integrate.kernels import build_csr, integrate, profile_1d
+from midas_integrate.kernels import (
+    build_csr,
+    integrate,
+    integrate_with_variance,
+    profile_1d,
+    profile_1d_with_variance,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -183,6 +189,7 @@ def time_one_run(
     rbin: float,
     eta_bin: float,
     verbose: bool,
+    with_variance: bool = False,
 ) -> dict:
     """Run the full pipeline once for a given (detector, device, dtype, mode).
 
@@ -214,6 +221,7 @@ def time_one_run(
         device=device, dtype=torch_dtype,
         bc_y=p.BC_y, bc_z=p.BC_z,
         build_modes=build_modes,
+        compute_variance=with_variance,
     )
     if device.startswith("cuda"):
         torch.cuda.synchronize()
@@ -233,20 +241,43 @@ def time_one_run(
     )
 
     # 4) Per-frame integrate + 1D profile
-    for _ in range(n_warmup):
-        int2d = integrate(img_t, geom, mode=mode, normalize=True)
-        prof = profile_1d(int2d, geom, mode="area_weighted")
-        if device.startswith("cuda"):
-            torch.cuda.synchronize()
+    if with_variance:
+        for _ in range(n_warmup):
+            int2d, var2d = integrate_with_variance(
+                img_t, geom, mode=mode, normalize=True,
+            )
+            prof, var1d = profile_1d_with_variance(
+                int2d, var2d, geom, mode="area_weighted",
+            )
+            if device.startswith("cuda"):
+                torch.cuda.synchronize()
+        ts = np.empty(n_iter, dtype=np.float64)
+        for i in range(n_iter):
+            t0 = time.perf_counter()
+            int2d, var2d = integrate_with_variance(
+                img_t, geom, mode=mode, normalize=True,
+            )
+            prof, var1d = profile_1d_with_variance(
+                int2d, var2d, geom, mode="area_weighted",
+            )
+            if device.startswith("cuda"):
+                torch.cuda.synchronize()
+            ts[i] = (time.perf_counter() - t0) * 1000.0
+    else:
+        for _ in range(n_warmup):
+            int2d = integrate(img_t, geom, mode=mode, normalize=True)
+            prof = profile_1d(int2d, geom, mode="area_weighted")
+            if device.startswith("cuda"):
+                torch.cuda.synchronize()
 
-    ts = np.empty(n_iter, dtype=np.float64)
-    for i in range(n_iter):
-        t0 = time.perf_counter()
-        int2d = integrate(img_t, geom, mode=mode, normalize=True)
-        prof = profile_1d(int2d, geom, mode="area_weighted")
-        if device.startswith("cuda"):
-            torch.cuda.synchronize()
-        ts[i] = (time.perf_counter() - t0) * 1000.0
+        ts = np.empty(n_iter, dtype=np.float64)
+        for i in range(n_iter):
+            t0 = time.perf_counter()
+            int2d = integrate(img_t, geom, mode=mode, normalize=True)
+            prof = profile_1d(int2d, geom, mode="area_weighted")
+            if device.startswith("cuda"):
+                torch.cuda.synchronize()
+            ts[i] = (time.perf_counter() - t0) * 1000.0
 
     median_ms = float(np.median(ts))
     nnz = int(geom.csr_floor._nnz()) if mode == "floor" \
@@ -266,6 +297,7 @@ def time_one_run(
         "fps": 1000.0 / median_ms,
         "n_warmup": n_warmup,
         "n_iter": n_iter,
+        "with_variance": with_variance,
     }
 
 
@@ -422,6 +454,11 @@ def main(argv=None) -> int:
              "Requires `pip install pyFAI`. Skipped silently if unavailable.",
     )
     parser.add_argument(
+        "--variance", action="store_true",
+        help="Use integrate_with_variance instead of integrate (one extra SpMV\n"
+             "with the squared-weight CSR for Poisson-σ propagation).",
+    )
+    parser.add_argument(
         "--output", type=Path, default=None,
         help="Output JSON path. Default: benchmark_results_<host>.json in cwd.",
     )
@@ -471,7 +508,7 @@ def main(argv=None) -> int:
                 n_warmup=args.n_warmup, n_iter=args.n_iter,
                 image_dtype=args.image_dtype,
                 rbin=args.rbin, eta_bin=args.eta_bin,
-                verbose=verbose,
+                verbose=verbose, with_variance=args.variance,
             )
             results.append({"tool": "midas-integrate", **r})
             if verbose:

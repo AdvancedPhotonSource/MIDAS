@@ -71,6 +71,11 @@ class IntegrationParams:
     SolidAngleCorrection: int = 0
     PolarizationCorrection: int = 0
     PolarizationFraction: float = 0.99
+    # Azimuthal angle (degrees) of the polarization plane with respect to η = 0.
+    # 0° matches the legacy "horizontal polarization at η = 0" convention used
+    # by pyFAI; 90° rotates the plane to vertical. For unpolarized beams set
+    # PolarizationFraction = 0 (the η-dependence vanishes).
+    PolarizationPlaneEtaDeg: float = 0.0
     GradientCorrection: int = 0
     NrTransOpt: int = 0
     TransOpt: List[int] = field(default_factory=list)
@@ -191,6 +196,7 @@ _KEY_HANDLERS = {
     "SolidAngleCorrection": ("SolidAngleCorrection", int),
     "PolarizationCorrection": ("PolarizationCorrection", int),
     "PolarizationFraction":   ("PolarizationFraction", float),
+    "PolarizationPlaneEtaDeg": ("PolarizationPlaneEtaDeg", float),
     "GradientCorrection": ("GradientCorrection", int),
     "GapIntensity":     ("GapIntensity",     int),
     "BadPxIntensity":   ("BadPxIntensity",   int),

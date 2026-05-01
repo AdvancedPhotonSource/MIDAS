@@ -728,16 +728,29 @@ def _index_impl(resultDir: str, numProcs: int, bin_dir: str, blockNr: int = 0,
 # Create retry-capable app
 index = create_app_with_retry(_index_impl)
 
-def _refine_impl(resultDir: str, numProcs: int, bin_dir: str, blockNr: int = 0, 
-                numBlocks: int = 1, useGPU: int = 0, logger=None):
+def _refine_impl(resultDir: str, numProcs: int, bin_dir: str, blockNr: int = 0,
+                numBlocks: int = 1, useGPU: int = 0,
+                useTorchRefiner: int = 0,
+                refineSolver: str = 'lbfgs',
+                refineLoss: str = 'pixel',
+                refineMode: str = '',
+                logger=None):
     """Implementation of refinement function.
-    
+
     Args:
         resultDir: Result directory
         numProcs: Number of processors
         bin_dir: Path to the bin directory
         blockNr: Block number
         numBlocks: Number of blocks
+        useGPU: 1 to use FitPosOrStrainsGPU instead of FitPosOrStrainsOMP (C binaries)
+        useTorchRefiner: 1 to use the pure-Python midas-fit-grain package
+                        (overrides useGPU; device/dtype via env vars)
+        refineSolver: solver name when useTorchRefiner=1
+                      ("lbfgs"|"adam"|"lm"|"nelder_mead", default "lbfgs")
+        refineLoss: residual definition when useTorchRefiner=1
+                    ("pixel"|"angular"|"internal_angle", default "pixel")
+        refineMode: "iterative"|"all_at_once" or empty to follow paramstest.txt
         logger: Logger instance
     """
     import subprocess
@@ -780,26 +793,47 @@ def _refine_impl(resultDir: str, numProcs: int, bin_dir: str, blockNr: int = 0,
     outfile = f'{resultDir}/midas_log/refining_out{blockNr}.csv'
     errfile = f'{resultDir}/midas_log/refining_err{blockNr}.csv'
     
-    refine_bin = 'FitPosOrStrainsGPU' if useGPU else 'FitPosOrStrainsOMP'
-    logger.info(f"Running {refine_bin} in {resultDir} for block {blockNr}/{numBlocks}")
-    
+    if useTorchRefiner:
+        refine_label = 'midas-fit-grain (torch)'
+    elif useGPU:
+        refine_label = 'FitPosOrStrainsGPU'
+    else:
+        refine_label = 'FitPosOrStrainsOMP'
+    logger.info(f"Running {refine_label} in {resultDir} for block {blockNr}/{numBlocks}")
+
     # Enable core dumps
     resource.setrlimit(resource.RLIMIT_CORE, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
-    
+
     with open(outfile, 'w') as f, open(errfile, 'w') as f_err:
-        cmd = f"{os.path.join(bin_dir, refine_bin)} paramstest.txt {blockNr} {numBlocks} {num_lines} {numProcs}"
+        if useTorchRefiner:
+            # Pure-Python midas-fit-grain. Device/dtype via
+            # MIDAS_FIT_GRAIN_DEVICE / MIDAS_FIT_GRAIN_DTYPE.
+            cmd_parts = [
+                sys.executable, '-m', 'midas_fit_grain',
+                'paramstest.txt',
+                str(blockNr), str(numBlocks),
+                str(num_lines), str(numProcs),
+                '--solver', refineSolver,
+                '--loss', refineLoss,
+            ]
+            if refineMode:
+                cmd_parts += ['--mode', refineMode]
+            cmd = ' '.join(cmd_parts)
+        else:
+            refine_bin = 'FitPosOrStrainsGPU' if useGPU else 'FitPosOrStrainsOMP'
+            cmd = f"{os.path.join(bin_dir, refine_bin)} paramstest.txt {blockNr} {numBlocks} {num_lines} {numProcs}"
         logger.info(f"Executing command: {cmd}")
-        
+
         process = subprocess.Popen(
-            cmd, 
-            shell=True, 
-            env=env, 
-            stdout=f, 
-            stderr=f_err, 
+            cmd,
+            shell=True,
+            env=env,
+            stdout=f,
+            stderr=f_err,
             cwd=resultDir
         )
         returncode = process.wait()
-        
+
         if returncode != 0:
             f_err.flush()
             with open(errfile, 'r') as err_reader:
@@ -807,8 +841,8 @@ def _refine_impl(resultDir: str, numProcs: int, bin_dir: str, blockNr: int = 0,
             error_msg = f"Refinement failed with return code {returncode}. Error output:\n{error_content}"
             logger.error(error_msg)
             raise RuntimeError(error_msg)
-        
-        logger.info(f"{refine_bin} completed successfully for block {blockNr}/{numBlocks}")
+
+        logger.info(f"{refine_label} completed successfully for block {blockNr}/{numBlocks}")
 
 # Create retry-capable app
 refine = create_app_with_retry(_refine_impl)
@@ -895,8 +929,13 @@ def process_layer(layer_nr: int, top_res_dir: str, ps_fn: str, data_fn: str, num
                  peak_search_only: int, bin_directory: str, grains_file: str = '',
                  resume_from_stage: str = '', generate_h5: bool = False, useGPU: int = 0,
                  useTorchIndexer: int = 0,
+                 useTorchRefiner: int = 0,
+                 refineSolver: str = 'lbfgs',
+                 refineLoss: str = 'pixel',
+                 refineMode: str = '',
                  peakFitGPU: int = 0,
                  useTorchTransforms: int = 0,
+                 useTorchHkls: int = 0,
                  run_sr: int = 0, srfac: int = 8, sr_config_path: str = 'auto',
                  save_sr_patches: int = 0, save_frame_good_coords: int = 0) -> None:
     """Process a single layer.
@@ -1024,7 +1063,11 @@ def process_layer(layer_nr: int, top_res_dir: str, ps_fn: str, data_fn: str, num
             try:
                 f_hkls_out = f'{result_dir}/midas_log/hkls_out.csv'
                 f_hkls_err = f'{result_dir}/midas_log/hkls_err.csv'
-                cmd = f"{os.path.join(bin_directory, 'GetHKLListZarr')} {outFStem}"
+                if useTorchHkls:
+                    cmd = (f"{sys.executable} -m midas_hkls zarr {outFStem} "
+                           f"--result-folder {result_dir}")
+                else:
+                    cmd = f"{os.path.join(bin_directory, 'GetHKLListZarr')} {outFStem}"
                 safely_run_command(cmd, result_dir, f_hkls_out, f_hkls_err, task_name="HKL generation")
             except Exception as e:
                 raise RuntimeError(f"Failed to generate HKLs: {e}")
@@ -1268,7 +1311,15 @@ def process_layer(layer_nr: int, top_res_dir: str, ps_fn: str, data_fn: str, num
             try:
                 res_refine = []
                 for nodeNr in range(n_nodes):
-                    res_refine.append(refine(result_dir, num_procs, bin_directory, blockNr=nodeNr, numBlocks=n_nodes, useGPU=useGPU))
+                    res_refine.append(refine(
+                        result_dir, num_procs, bin_directory,
+                        blockNr=nodeNr, numBlocks=n_nodes,
+                        useGPU=useGPU,
+                        useTorchRefiner=useTorchRefiner,
+                        refineSolver=refineSolver,
+                        refineLoss=refineLoss,
+                        refineMode=refineMode,
+                    ))
                 output_refine = [i.result() for i in res_refine]
                 ph5.mark('refinement')
             except Exception as e:
@@ -2050,6 +2101,20 @@ def main():
                              'instead of the C IndexerOMP/IndexerGPU binaries. Device/dtype follow the '
                              'MIDAS_INDEX_DEVICE / MIDAS_INDEX_DTYPE environment variables (auto-detect '
                              'CUDA -> MPS -> CPU by default). Default: 0 (use C binary).')
+    parser.add_argument('-useTorchRefiner', type=int, required=False, default=0,
+                        help='Use the pure-Python midas-fit-grain package (`python -m midas_fit_grain`) '
+                             'instead of the C FitPosOrStrainsOMP / FitPosOrStrainsGPU binaries. '
+                             'Device/dtype follow MIDAS_FIT_GRAIN_DEVICE / MIDAS_FIT_GRAIN_DTYPE env vars. '
+                             'Default: 0 (use C binary).')
+    parser.add_argument('-refineSolver', type=str, required=False, default='lbfgs',
+                        choices=['lbfgs', 'adam', 'lm', 'nelder_mead'],
+                        help='Optimizer for the torch refiner. Only used when -useTorchRefiner=1.')
+    parser.add_argument('-refineLoss', type=str, required=False, default='pixel',
+                        choices=['pixel', 'angular', 'internal_angle'],
+                        help='Residual definition for the torch refiner. Only used when -useTorchRefiner=1.')
+    parser.add_argument('-refineMode', type=str, required=False, default='',
+                        choices=['', 'iterative', 'all_at_once'],
+                        help='Override iterative-vs-all-at-once. Empty = follow paramstest.txt FitAllAtOnce.')
     parser.add_argument('-peakFitGPU', type=int, required=False, default=0,
                         help='Use GPU/PyTorch peak fitter (peakfit_torch from midas-peakfit) instead of '
                              'the OMP C tool PeaksFittingOMPZarrRefactor. Default: 0 (use C tool).')
@@ -2059,6 +2124,9 @@ def main():
                              'binaries (MergeOverlappingPeaksAllZarr, CalcRadiusAllZarr, FitSetupZarr, '
                              'SaveBinData). Device/dtype follow the MIDAS_TRANSFORMS_DEVICE / '
                              'MIDAS_TRANSFORMS_DTYPE environment variables. Default: 0 (use C binaries).')
+    parser.add_argument('-useTorchHkls', type=int, required=False, default=0,
+                        help='Use the pure-Python midas-hkls package (`python -m midas_hkls zarr`) '
+                             'instead of the C GetHKLListZarr binary. Default: 0 (use C binary).')
     parser.add_argument('-generateH5', type=int, required=False, default=0,
                         help='Set to 1 to generate consolidated HDF5 at the end of each layer. Disabled by default.')
     parser.add_argument('-skipValidation', action='store_true',
@@ -2315,8 +2383,13 @@ def main():
                         generate_h5=bool(args.generateH5),
                         useGPU=args.useGPU,
                         useTorchIndexer=args.useTorchIndexer,
+                        useTorchRefiner=args.useTorchRefiner,
+                        refineSolver=args.refineSolver,
+                        refineLoss=args.refineLoss,
+                        refineMode=args.refineMode,
                         peakFitGPU=args.peakFitGPU,
                         useTorchTransforms=args.useTorchTransforms,
+                        useTorchHkls=args.useTorchHkls,
                         run_sr=run_sr,
                         srfac=srfac,
                         sr_config_path=sr_config_path,
@@ -2368,8 +2441,13 @@ def main():
                         generate_h5=bool(args.generateH5),
                         useGPU=args.useGPU,
                         useTorchIndexer=args.useTorchIndexer,
+                        useTorchRefiner=args.useTorchRefiner,
+                        refineSolver=args.refineSolver,
+                        refineLoss=args.refineLoss,
+                        refineMode=args.refineMode,
                         peakFitGPU=args.peakFitGPU,
                         useTorchTransforms=args.useTorchTransforms,
+                        useTorchHkls=args.useTorchHkls,
                         run_sr=run_sr,
                         srfac=srfac,
                         sr_config_path=sr_config_path,

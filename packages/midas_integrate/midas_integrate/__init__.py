@@ -38,7 +38,9 @@ from midas_integrate.kernels import (
     CSRGeometry,
     build_csr,
     integrate,
+    integrate_with_variance,
     profile_1d,
+    profile_1d_with_variance,
 )
 from midas_integrate.image import (
     bytes_per_pixel,
@@ -98,7 +100,9 @@ __all__ = [
     "CSRGeometry",
     "build_csr",
     "integrate",
+    "integrate_with_variance",
     "profile_1d",
+    "profile_1d_with_variance",
     # image
     "bytes_per_pixel",
     "decode_payload",

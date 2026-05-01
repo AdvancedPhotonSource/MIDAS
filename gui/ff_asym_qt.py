@@ -49,7 +49,8 @@ if _utils_dir not in sys.path:
     sys.path.append(_utils_dir)
 
 from gui_common import (MIDASImageView, apply_theme, get_colormap,
-                         AsyncWorker, LogPanel, add_shortcut, COLORMAPS)
+                         AsyncWorker, LogPanel, add_shortcut, COLORMAPS,
+                         draw_lab_frame_axes)
 
 try:
     import midas_config
@@ -295,6 +296,16 @@ def auto_detect_files(cwd):
                 result['dark_stem'] = dp[0]
                 result['dark_num'] = dp[1]
                 break
+
+    # MIDAS-style param file (ps*.txt, Parameters*.txt, params*.txt)
+    candidates = []
+    for f in all_files:
+        fl = f.lower()
+        if fl.endswith('.txt') and (fl.startswith('ps') or fl.startswith('parameter')
+                                     or fl.startswith('params')):
+            candidates.append(os.path.join(cwd, f))
+    if len(candidates) == 1:
+        result['param_file'] = candidates[0]
     return result
 
 
@@ -376,6 +387,7 @@ class FFViewer(QtWidgets.QMainWindow):
         self.bc_local = [1024.0, 1024.0]
         self.bcs = None
         self.tx = [0]; self.ty = [0]; self.tz = [0]
+        self.tx_local = 0.0
         self.n_detectors = 1
         self.start_det_nr = 1; self.end_det_nr = 1
         self.dark_cache = {}
@@ -387,6 +399,9 @@ class FFViewer(QtWidgets.QMainWindow):
         self.rings_to_show = []
         self.show_rings = False
         self._ring_items = []
+
+        # Lab-frame axes overlay
+        self.show_axes = False
 
         # Crystallography
         self.sg = 225
@@ -423,6 +438,10 @@ class FFViewer(QtWidgets.QMainWindow):
         load_act = file_menu.addAction('Load Session...')
         load_act.setShortcut('Ctrl+Shift+S')
         load_act.triggered.connect(self._load_session)
+        file_menu.addSeparator()
+        param_act = file_menu.addAction('Load Param File...')
+        param_act.setShortcut('Ctrl+P')
+        param_act.triggered.connect(self._on_load_param_file)
 
         # ── Toolbar ──
         tb = self._build_toolbar()
@@ -529,6 +548,15 @@ class FFViewer(QtWidgets.QMainWindow):
         self.rings_check = QtWidgets.QCheckBox("Rings")
         tb.addWidget(self.rings_check)
 
+        # Lab-frame axes
+        self.axes_check = QtWidgets.QCheckBox("Lab Axes")
+        self.axes_check.setToolTip(
+            "Overlay MIDAS lab-frame axes from beam center.\n"
+            "+Y arrow → left, +Z arrow → up, ⊗ at BC = +X (beam, into page).\n"
+            "Use this to verify ImTransOpt — features should be in the\n"
+            "physically expected lab-frame quadrant.")
+        tb.addWidget(self.axes_check)
+
         # Intensity controls (moved from Display panel)
         tb.addWidget(QtWidgets.QLabel("Min I:"))
         self.min_intensity_edit = QtWidgets.QLineEdit("0")
@@ -613,6 +641,17 @@ class FFViewer(QtWidgets.QMainWindow):
         btn_h5d = QtWidgets.QPushButton("Browse")
         btn_h5d.clicked.connect(lambda: self._browse_h5(True))
         lay.addWidget(btn_h5d, 4, 3)
+
+        btn_param = QtWidgets.QPushButton("Load Params")
+        btn_param.setToolTip(
+            "Load a MIDAS-style parameter file (ps.txt / Parameters.txt).\n"
+            "Populates detector geometry, transforms, crystallography, "
+            "and file layout fields, then redraws.")
+        btn_param.clicked.connect(self._on_load_param_file)
+        lay.addWidget(btn_param, 5, 0)
+        self.param_label = QtWidgets.QLabel("")
+        self.param_label.setStyleSheet("color: gray;")
+        lay.addWidget(self.param_label, 5, 1, 1, 3)
 
         return grp
 
@@ -699,6 +738,15 @@ class FFViewer(QtWidgets.QMainWindow):
         self.bcz_edit.setMinimumWidth(90)
         lay.addWidget(self.bcz_edit, 3, 1)
 
+        lay.addWidget(QtWidgets.QLabel("Tx (deg)"), 4, 0)
+        self.tx_edit = QtWidgets.QLineEdit(str(self.tx_local))
+        self.tx_edit.setMinimumWidth(90)
+        self.tx_edit.setToolTip(
+            "Detector tilt about beam axis (deg).\n"
+            "Image is rotated around (Beam Ctr Y, Beam Ctr Z) by -Tx to undo the tilt.\n"
+            "Cursor R/η are reported in the corrected frame.")
+        lay.addWidget(self.tx_edit, 4, 1)
+
         return grp
 
     # ── Signal Wiring (reactive) ───────────────────────────────────
@@ -710,6 +758,7 @@ class FFViewer(QtWidgets.QMainWindow):
         self.log_check.toggled.connect(self._on_log_toggled)
         self.dark_check.toggled.connect(self._load_and_display)
         self.rings_check.toggled.connect(self._on_rings_toggled)
+        self.axes_check.toggled.connect(self._on_axes_toggled)
         self.mask_check.toggled.connect(self._load_and_display)
         self.hflip_check.toggled.connect(self._load_and_display)
         self.vflip_check.toggled.connect(self._load_and_display)
@@ -728,6 +777,7 @@ class FFViewer(QtWidgets.QMainWindow):
         self.bcy_edit.editingFinished.connect(self._redraw_if_rings)
         self.bcz_edit.editingFinished.connect(self._redraw_if_rings)
         self.lsd_edit.editingFinished.connect(self._redraw_if_rings)
+        self.tx_edit.editingFinished.connect(self._load_and_display)
         self.h5dark_edit.editingFinished.connect(self._load_and_display)
         self.image_view.dataStatsUpdated.connect(self._on_stats_updated)
         # Movie mode: advance frame by 1 (wraps at max)
@@ -747,6 +797,14 @@ class FFViewer(QtWidgets.QMainWindow):
             '  ← / → — Previous / Next frame\n'
             '  L — Toggle log scale\n'
             '  R — Toggle ring overlay\n'
+            '  A — Toggle MIDAS lab-frame axes\n'
+            '  Q — Quit\n'
+            '\n'
+            'MIDAS lab frame (axes overlay):\n'
+            '  +Y → display LEFT, +Z → display UP\n'
+            '  +X → into the page (beam direction, ⊗ at BC)\n'
+            '  η = 0 at +Z, +90° at −Y, ±180° at −Z, −90° at +Y\n'
+            '  View is "looking from source toward detector"\n'
             '\n'
             'Histogram (right side of image):\n'
             '  Drag top/bottom bars — Adjust thresholds\n'
@@ -757,6 +815,7 @@ class FFViewer(QtWidgets.QMainWindow):
         add_shortcut(self, 'Left', lambda: self.frame_spin.setValue(self.frame_spin.value() - 1))
         add_shortcut(self, 'L', lambda: self.log_check.toggle())
         add_shortcut(self, 'R', lambda: self.rings_check.toggle())
+        add_shortcut(self, 'A', lambda: self.axes_check.toggle())
         add_shortcut(self, 'Q', self.close)
 
     # ── Session Save / Load ────────────────────────────────────────
@@ -783,6 +842,7 @@ class FFViewer(QtWidgets.QMainWindow):
             'lsd': float(self.lsd_edit.text()),
             'bcy': float(self.bcy_edit.text()),
             'bcz': float(self.bcz_edit.text()),
+            'tx': float(self.tx_edit.text()),
             'px': float(self.px_edit.text()),
             'colormap': self.cmap_combo.currentText(),
             'theme': self.theme_combo.currentText(),
@@ -791,6 +851,7 @@ class FFViewer(QtWidgets.QMainWindow):
             'vflip': self.vflip_check.isChecked(),
             'transpose': self.transpose_check.isChecked(),
             'show_rings': self.rings_check.isChecked(),
+            'show_axes': self.axes_check.isChecked(),
             'use_dark': self.dark_check.isChecked(),
         }
         try:
@@ -831,6 +892,7 @@ class FFViewer(QtWidgets.QMainWindow):
         self.lsd_edit.setText(str(state.get('lsd', 1000000.0)))
         self.bcy_edit.setText(str(state.get('bcy', 1024.0)))
         self.bcz_edit.setText(str(state.get('bcz', 1024.0)))
+        self.tx_edit.setText(str(state.get('tx', 0.0)))
         self.px_edit.setText(str(state.get('px', 200.0)))
 
         self.cmap_combo.setCurrentText(state.get('colormap', 'bone'))
@@ -840,10 +902,234 @@ class FFViewer(QtWidgets.QMainWindow):
         self.vflip_check.setChecked(state.get('vflip', False))
         self.transpose_check.setChecked(state.get('transpose', False))
         self.rings_check.setChecked(state.get('show_rings', False))
+        self.axes_check.setChecked(state.get('show_axes', False))
         self.dark_check.setChecked(state.get('use_dark', False))
 
         self.frame_spin.setValue(state.get('frame', 0))
         print(f'Session loaded: {fn}')
+
+    # ── Parameter File ─────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_param_file(fn):
+        """Parse a MIDAS-style param file (ps.txt / Parameters.txt).
+
+        Format: one entry per line, ``key value [value...]``. ``#`` starts a
+        comment, optional trailing semicolons are stripped. Keys that repeat
+        across lines (e.g. ``ImTransOpt``, ``RingThresh``) are accumulated
+        into a list of value-token-lists.
+        Returns: dict mapping key -> list of value-token-lists.
+        """
+        params = {}
+        with open(fn, 'r') as f:
+            for raw in f:
+                line = raw.split('#', 1)[0].strip().rstrip(';').strip()
+                if not line:
+                    continue
+                tokens = line.split()
+                if len(tokens) < 2:
+                    continue
+                key = tokens[0]
+                params.setdefault(key, []).append(tokens[1:])
+        return params
+
+    def _on_load_param_file(self):
+        fn, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select MIDAS Parameter File", os.getcwd(),
+            "Param Files (*.txt);;All (*)")
+        if fn:
+            self._apply_param_file(fn)
+
+    def _apply_param_file(self, fn):
+        """Read fn, populate GUI fields from MIDAS params, then reload."""
+        try:
+            params = self._parse_param_file(fn)
+        except Exception as e:
+            print(f"Param file read failed: {e}")
+            return
+
+        # Helpers — return None if missing/unparseable so we can leave fields alone.
+        def first_tokens(*keys):
+            for k in keys:
+                if k in params:
+                    return params[k][0]
+            return None
+
+        def get_str(*keys):
+            v = first_tokens(*keys)
+            return v[0] if v else None
+
+        def get_float(*keys):
+            v = first_tokens(*keys)
+            try:
+                return float(v[0]) if v else None
+            except (ValueError, IndexError):
+                return None
+
+        def get_int(*keys):
+            v = first_tokens(*keys)
+            try:
+                return int(float(v[0])) if v else None
+            except (ValueError, IndexError):
+                return None
+
+        def get_floats(n, *keys):
+            v = first_tokens(*keys)
+            if not v or len(v) < n:
+                return None
+            try:
+                return [float(x) for x in v[:n]]
+            except ValueError:
+                return None
+
+        applied = []  # for log
+
+        # ── Files / layout ──
+        folder = get_str('RawFolder', 'Folder')
+        if folder:
+            self.folder = folder.rstrip('/').rstrip('\\') + '/'
+            applied.append(f"folder={folder}")
+        fs = get_str('FileStem')
+        if fs:
+            self.file_stem = fs
+            applied.append(f"FileStem={fs}")
+        sn = get_int('StartNr', 'StartFileNrFirstLayer')
+        if sn is not None:
+            self.first_file_nr = sn
+            self.file_nr_edit.setText(str(sn))
+            applied.append(f"StartNr={sn}")
+        pad = get_int('Padding')
+        if pad is not None:
+            self.padding = pad
+        ext = get_str('Ext')
+        if ext:
+            self.ext = ext.lstrip('.')
+            applied.append(f"Ext={self.ext}")
+            # Detect ge<digit> as multi-detector marker
+            if self.ext.startswith('ge') and len(self.ext) == 3 and self.ext[-1].isdigit():
+                self.det_nr = int(self.ext[-1])
+
+        # ── Detector pixels ──
+        npx = get_int('NrPixels')
+        if npx is not None:
+            self.ny = npx
+            self.nz = npx
+        npy = get_int('NrPixelsY')
+        if npy is not None:
+            self.ny = npy
+        npz = get_int('NrPixelsZ')
+        if npz is not None:
+            self.nz = npz
+        if any(v is not None for v in (npx, npy, npz)):
+            self.ny_edit.setText(str(self.ny))
+            self.nz_edit.setText(str(self.nz))
+            applied.append(f"NrPixels={self.ny}x{self.nz}")
+
+        hs = get_int('HeadSize', 'HeaderSize')
+        if hs is not None:
+            self.header_size = hs
+            self.header_edit.setText(str(hs))
+            applied.append(f"HeadSize={hs}")
+        bpp = get_int('BytesPerPixel')
+        if bpp is not None:
+            self.bytes_per_pixel = bpp
+            self.bpp_edit.setText(str(bpp))
+            applied.append(f"BytesPerPixel={bpp}")
+
+        px = get_float('px', 'PixelSize')
+        if px is not None:
+            self.pixel_size = px
+            self.px_edit.setText(str(px))
+            applied.append(f"px={px}")
+
+        # ── Geometry ──
+        lsd = get_float('Lsd')
+        if lsd is not None:
+            self.lsd_local = lsd
+            self.lsd_orig = lsd
+            self.lsd_edit.setText(str(lsd))
+            applied.append(f"Lsd={lsd}")
+        bc = get_floats(2, 'BC')
+        if bc is None:
+            ycen = get_float('YCen')
+            zcen = get_float('ZCen')
+            if ycen is not None and zcen is not None:
+                bc = [ycen, zcen]
+        if bc:
+            self.bc_local = bc
+            self.bcy_edit.setText(str(bc[0]))
+            self.bcz_edit.setText(str(bc[1]))
+            applied.append(f"BC={bc[0]},{bc[1]}")
+
+        tx = get_float('tx')
+        if tx is not None:
+            self.tx_local = tx
+            self.tx_edit.setText(str(tx))
+            applied.append(f"tx={tx}")
+
+        wd = get_float('Wedge')
+        if wd is not None:
+            self.wedge = wd
+
+        # ── Crystallography (rings) ──
+        wl = get_float('Wavelength')
+        if wl is not None:
+            self.wl = (12.398 / wl) if wl > 1.0 else wl
+            applied.append(f"Wavelength={self.wl:.5f}Å")
+        sg = get_int('SpaceGroup', 'SpaceGroupNumber')
+        if sg is not None:
+            self.sg = sg
+            applied.append(f"SpaceGroup={sg}")
+        lc = get_floats(6, 'LatticeConstant', 'LatticeParameter')
+        if lc:
+            self.lattice_const = lc
+        mr = get_float('MaxRingRad', 'RhoD')
+        if mr is not None:
+            self.temp_max_ring_rad = mr
+
+        # ── Image transforms (ImTransOpt: 1=HFlip 2=VFlip 3=Transpose, repeatable) ──
+        if 'ImTransOpt' in params:
+            opts = []
+            for line_vals in params['ImTransOpt']:
+                for v in line_vals:
+                    try:
+                        opts.append(int(v))
+                    except ValueError:
+                        pass
+            self.hflip_check.setChecked(1 in opts)
+            self.vflip_check.setChecked(2 in opts)
+            self.transpose_check.setChecked(3 in opts)
+            applied.append(f"ImTransOpt={opts}")
+
+        # ── Frames per file ──
+        nfs = get_int('NrFilesPerSweep', 'nFramesPerFile', 'NFramesPerFile')
+        if nfs is not None:
+            self.n_frames_per_file = nfs
+            self.nframes_edit.setText(str(nfs))
+
+        # ── Dark file ──
+        ds = get_str('DarkStem', 'Dark')
+        if ds:
+            if os.sep in ds or '/' in ds:
+                self.dark_folder = os.path.dirname(ds) + '/'
+                basename = os.path.basename(ds)
+                parsed = _parse_numbered_filename(basename)
+                if parsed:
+                    self.dark_stem = parsed[0]
+                    self.dark_num = parsed[1]
+            else:
+                self.dark_stem = ds
+            self.dark_check.setChecked(True)
+            applied.append(f"Dark={ds}")
+
+        self.param_label.setText(os.path.basename(fn))
+        print(f"Param file: {fn}")
+        for entry in applied:
+            print(f"  {entry}")
+
+        self._load_and_display()
+        if self.show_rings and self.ring_rads:
+            self._draw_rings()
 
     # ── Callbacks ──────────────────────────────────────────────────
 
@@ -871,6 +1157,9 @@ class FFViewer(QtWidgets.QMainWindow):
 
     def _on_font_changed(self, size):
         QtWidgets.QApplication.instance().setStyleSheet(f'* {{ font-size: {size}pt; }}')
+        # pyqtgraph TextItems don't pick up Qt stylesheet font changes — redraw.
+        if self.show_axes:
+            self._draw_axes()
 
     def _on_frame_scroll(self, delta):
         self.frame_spin.setValue(self.frame_spin.value() + delta)
@@ -1017,7 +1306,14 @@ class FFViewer(QtWidgets.QMainWindow):
             else:
                 self._draw_rings()
         else:
-            self.image_view.clear_overlays()
+            self.image_view.clear_overlays('rings')
+
+    def _on_axes_toggled(self, checked):
+        self.show_axes = checked
+        if checked:
+            self._draw_axes()
+        else:
+            self.image_view.clear_overlays('axes')
 
     def _on_first_file(self):
         fn, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select First File")
@@ -1141,6 +1437,9 @@ class FFViewer(QtWidgets.QMainWindow):
                 self.bc_local = [float(p['YCen'][0]), float(p['ZCen'][0])]
                 self.bcy_edit.setText(str(self.bc_local[0]))
                 self.bcz_edit.setText(str(self.bc_local[1]))
+            if 'tx' in p:
+                self.tx_local = float(p['tx'][0])
+                self.tx_edit.setText(str(self.tx_local))
             if 'PixelSize' in p:
                 self.pixel_size = float(p['PixelSize'][0])
                 self.px_edit.setText(str(self.pixel_size))
@@ -1189,10 +1488,35 @@ class FFViewer(QtWidgets.QMainWindow):
             self.n_frames_per_file = int(self.nframes_edit.text())
             self.lsd_local = float(self.lsd_edit.text())
             self.bc_local = [float(self.bcy_edit.text()), float(self.bcz_edit.text())]
+            try:
+                self.tx_local = float(self.tx_edit.text())
+            except (ValueError, AttributeError):
+                self.tx_local = 0.0
             self.hdf5_data_path = self.h5data_edit.text()
             self.hdf5_dark_path = self.h5dark_edit.text()
         except ValueError:
             pass
+
+    def _apply_tx_rotation(self, data):
+        """Rotate `data` around (bcy, bcz) by -tx degrees to correct detector tilt
+        about the beam axis. Returns `data` unchanged when |tx| is ~0."""
+        if data is None or abs(self.tx_local) < 1e-9:
+            return data
+        try:
+            from scipy.ndimage import affine_transform
+        except ImportError:
+            print("scipy not installed — cannot apply Tx rotation")
+            return data
+        # Display: X = bcy = column index (nz axis), Y = bcz = row index (ny axis)
+        theta = -self.tx_local * deg2rad
+        c, s = math.cos(theta), math.sin(theta)
+        bc_i = self.bc_local[1]  # row (Y)
+        bc_j = self.bc_local[0]  # col (X)
+        M = np.array([[c, -s], [s, c]])
+        center = np.array([bc_i, bc_j])
+        offset = center - M @ center
+        return affine_transform(data, M, offset=offset, order=1,
+                                mode='constant', cval=0.0)
 
     def _load_and_display(self):
         """Load current frame and display."""
@@ -1373,6 +1697,7 @@ class FFViewer(QtWidgets.QMainWindow):
 
             def _on_accum_done(result):
                 data_out, n_done, elapsed = result
+                data_out = self._apply_tx_rotation(data_out)
                 self.bdata = data_out
                 if getattr(self, '_levels_initialized', False):
                     try:
@@ -1394,6 +1719,8 @@ class FFViewer(QtWidgets.QMainWindow):
                 self.setWindowTitle(f"FF Viewer — {fn_display} [frame {self.frame_nr}]")
                 if self.show_rings and self.ring_rads:
                     self._draw_rings()
+                if self.show_axes:
+                    self._draw_axes()
                 print(f"{mode_str}OverFrames: {n_done} frames from frame {start_frame} in {elapsed:.2f}s")
 
             def _on_accum_error(msg):
@@ -1424,6 +1751,7 @@ class FFViewer(QtWidgets.QMainWindow):
             if dark_data is not None:
                 data = np.maximum(data - dark_data, 0)
 
+        data = self._apply_tx_rotation(data)
         self.bdata = data
         # On first load, auto-levels; afterwards use user's MinI/MaxI
         if getattr(self, '_levels_initialized', False):
@@ -1440,15 +1768,19 @@ class FFViewer(QtWidgets.QMainWindow):
         self.setWindowTitle(f"FF Viewer — {basename} [frame {self.frame_nr}]")
         if self.show_rings and self.ring_rads:
             self._draw_rings()
+        if self.show_axes:
+            self._draw_axes()
 
     # ── Rings ──────────────────────────────────────────────────────
 
     def _redraw_if_rings(self):
         if self.show_rings and self.ring_rads:
             self._draw_rings()
+        if self.show_axes:
+            self._draw_axes()
 
     def _draw_rings(self):
-        self.image_view.clear_overlays()
+        self.image_view.clear_overlays('rings')
         if not self.ring_rads:
             return
         px = self.pixel_size
@@ -1467,7 +1799,28 @@ class FFViewer(QtWidgets.QMainWindow):
                                         [bc_y, bc_z], px)
             color = colors[idx % len(colors)]
             curve = pg.PlotDataItem(Y, Z, pen=pg.mkPen(color, width=1.5))
-            self.image_view.add_overlay(curve)
+            self.image_view.add_overlay(curve, 'rings')
+
+    def _draw_axes(self):
+        """Overlay MIDAS lab-frame axes anchored at the beam center.
+
+        Convention (looking from source toward detector):
+          +Y → display LEFT, +Z → display UP, +X → INTO page (⊗ at BC),
+          η = 0 toward +Z; an arc from 0°→+45° shows η-sweep direction.
+        Used to verify ImTransOpt: features should be in the expected
+        lab-frame quadrant relative to BC.
+        """
+        try:
+            bc_y = float(self.bcy_edit.text())
+            bc_z = float(self.bcz_edit.text())
+        except ValueError:
+            self.image_view.clear_overlays('axes')
+            return
+        # Scale label font to GUI font setting; minimum 12pt for readability.
+        gui_pt = self.font_spin.value() if hasattr(self, 'font_spin') else 10
+        font_size = max(12, int(round(gui_pt * 1.4)))
+        draw_lab_frame_axes(self.image_view, bc_y, bc_z, self.ny, self.nz,
+                            font_size=font_size)
 
     def _on_ring_selection(self):
         """Open ring material selection dialog."""
@@ -1525,6 +1878,8 @@ class FFViewer(QtWidgets.QMainWindow):
             print(f"Auto-detected: {self.file_stem} in {self.folder}")
             self.setWindowTitle(self.windowTitle() + " [files detected]")
             self._load_and_display()
+        if 'param_file' in result:
+            self._apply_param_file(result['param_file'])
 
 
 

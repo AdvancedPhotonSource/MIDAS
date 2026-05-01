@@ -47,7 +47,8 @@ if _utils_dir not in sys.path:
     sys.path.append(_utils_dir)
 
 from gui_common import (MIDASImageView, apply_theme, get_colormap,
-                         AsyncWorker, LogPanel, add_shortcut, COLORMAPS)
+                         AsyncWorker, LogPanel, add_shortcut, COLORMAPS,
+                         draw_lab_frame_axes)
 
 try:
     import midas_config
@@ -190,6 +191,9 @@ class NFViewer(QtWidgets.QMainWindow):
         self.bcs = np.zeros((self.n_distances, 2))
         self.spots = np.zeros((self.n_distances, 3))
         self.dist_diff = 0.0
+
+        # Lab-frame axes overlay
+        self.show_axes = False
 
         self._selecting_spots = False
         self._click_ix = 0.0
@@ -368,6 +372,15 @@ class NFViewer(QtWidgets.QMainWindow):
 
         self.log_check = QtWidgets.QCheckBox("Log")
         tb.addWidget(self.log_check)
+
+        # Lab-frame axes
+        self.axes_check = QtWidgets.QCheckBox("Lab Axes")
+        self.axes_check.setToolTip(
+            "Overlay MIDAS lab-frame axes from the current distance's beam center.\n"
+            "+Y arrow → display LEFT, +Z arrow → display UP, ⊗ at BC = +X (beam, into page).\n"
+            "η=0 points toward +Z. If the BC for the current distance is not set, "
+            "axes anchor at (0, 0) and a warning is shown.")
+        tb.addWidget(self.axes_check)
 
         # Intensity controls (moved from Processing panel)
         tb.addWidget(QtWidgets.QLabel("Min I:"))
@@ -584,6 +597,7 @@ class NFViewer(QtWidgets.QMainWindow):
         self.frame_spin.valueChanged.connect(self._load_and_display)
         self.dist_spin.valueChanged.connect(self._load_and_display)
         self.log_check.toggled.connect(self._on_log_toggled)
+        self.axes_check.toggled.connect(self._on_axes_toggled)
         self.median_check.toggled.connect(self._load_and_display)
         self.maxframes_check.toggled.connect(self._on_max_toggled)
         self.sumframes_check.toggled.connect(self._on_sum_toggled)
@@ -604,6 +618,9 @@ class NFViewer(QtWidgets.QMainWindow):
 
     def _on_font_changed(self, size):
         QtWidgets.QApplication.instance().setStyleSheet(f'* {{ font-size: {size}pt; }}')
+        # pyqtgraph TextItems don't pick up Qt stylesheet font changes — redraw.
+        if self.show_axes:
+            self._draw_axes()
 
     def _show_help(self):
         QtWidgets.QMessageBox.information(self, 'NF Viewer — Controls',
@@ -617,7 +634,17 @@ class NFViewer(QtWidgets.QMainWindow):
             'Keyboard Shortcuts:\n'
             '  ← / → — Previous / Next frame\n'
             '  L — Toggle log scale\n'
+            '  A — Toggle MIDAS lab-frame axes\n'
             '  Q — Quit\n'
+            '\n'
+            'MIDAS lab frame (axes overlay):\n'
+            '  +Y → display LEFT, +Z → display UP\n'
+            '  +X → into the page (beam direction, ⊗ at BC)\n'
+            '  η = 0 at +Z, +90° on display-right (−Y_lab side),\n'
+            '          ±180° at bottom, −90° on display-left (+Y_lab side)\n'
+            '  NF display origin = bottom-right; FF = bottom-left.\n'
+            '  Both viewers show the same physical convention\n'
+            '  (looking from source toward detector).\n'
             '\n'
             'Histogram (right side of image):\n'
             '  Drag top/bottom bars — Adjust thresholds\n'
@@ -630,6 +657,7 @@ class NFViewer(QtWidgets.QMainWindow):
         add_shortcut(self, 'Right', lambda: self.frame_spin.setValue(self.frame_spin.value() + 1))
         add_shortcut(self, 'Left', lambda: self.frame_spin.setValue(self.frame_spin.value() - 1))
         add_shortcut(self, 'L', lambda: self.log_check.toggle())
+        add_shortcut(self, 'A', lambda: self.axes_check.toggle())
         add_shortcut(self, 'Q', self.close)
 
     # ── Session Save / Load ────────────────────────────────────────
@@ -658,6 +686,8 @@ class NFViewer(QtWidgets.QMainWindow):
             'vflip': self.vflip_check.isChecked(),
             'transpose': self.transpose_check.isChecked(),
             'median': self.median_check.isChecked(),
+            'show_axes': self.axes_check.isChecked(),
+            'bcs': self.bcs.tolist(),
         }
         try:
             with open(fn, 'w') as f:
@@ -697,6 +727,17 @@ class NFViewer(QtWidgets.QMainWindow):
         self.vflip_check.setChecked(state.get('vflip', False))
         self.transpose_check.setChecked(state.get('transpose', False))
         self.median_check.setChecked(state.get('median', False))
+
+        # Restore beam centers (for axes overlay) before toggling axes on
+        bcs = state.get('bcs')
+        if bcs is not None:
+            try:
+                arr = np.array(bcs, dtype=float)
+                if arr.shape == self.bcs.shape:
+                    self.bcs = arr
+            except Exception:
+                pass
+        self.axes_check.setChecked(state.get('show_axes', False))
 
         self.dist_spin.setValue(state.get('distance', 0))
         self.frame_spin.setValue(state.get('frame', 0))
@@ -1275,6 +1316,9 @@ class NFViewer(QtWidgets.QMainWindow):
         if hasattr(self, '_box_roi') and self._box_roi is not None:
             self._update_box_profile()
 
+        if self.show_axes:
+            self._draw_axes()
+
     # ── Line Profile ───────────────────────────────────────────────
 
 
@@ -1765,6 +1809,47 @@ class NFViewer(QtWidgets.QMainWindow):
     def _on_beam_center(self):
         dlg = BeamCenterDialog(self)
         dlg.exec_()
+        # Refresh axes after BC edits so the overlay tracks the new origin.
+        if self.show_axes:
+            self._draw_axes()
+
+    # ── Lab-frame axes overlay ─────────────────────────────────────
+
+    def _on_axes_toggled(self, checked):
+        self.show_axes = checked
+        if checked:
+            self._draw_axes()
+        else:
+            self.image_view.clear_overlays('axes')
+
+    def _draw_axes(self):
+        """Overlay MIDAS lab-frame axes anchored at the current distance's BC.
+
+        See :func:`gui_common.draw_lab_frame_axes` for the full convention.
+        Adds NF-specific BC validation: warns the user if the current
+        distance's beam center is uninitialized (0, 0) and falls back to
+        anchoring the overlay at image (0, 0).
+        """
+        dist = int(self.dist)
+        if dist < 0 or dist >= len(self.bcs):
+            self.image_view.clear_overlays('axes')
+            return
+        bc_y = float(self.bcs[dist][0])
+        bc_z = float(self.bcs[dist][1])
+
+        if bc_y == 0.0 and bc_z == 0.0:
+            QtWidgets.QMessageBox.warning(
+                self, "Beam center not set",
+                f"Beam center for distance {dist} is (0, 0) — not initialized.\n"
+                "Click 'BeamCenter' in the Processing panel to enter values\n"
+                "for each distance.\n\n"
+                "Drawing lab-frame axes at the image origin (0, 0) for now.")
+            bc_y, bc_z = 0.0, 0.0
+
+        gui_pt = self.font_spin.value() if hasattr(self, 'font_spin') else 10
+        font_size = max(12, int(round(gui_pt * 1.4)))
+        draw_lab_frame_axes(self.image_view, bc_y, bc_z, self.ny, self.nz,
+                            font_size=font_size)
 
     # ── Median ─────────────────────────────────────────────────────
 
@@ -1909,15 +1994,15 @@ class NFViewer(QtWidgets.QMainWindow):
         yn = (ya + ys * (1 - xa / this_lsd)) / px + self.bcs[dist][0]
         zn = (zs * (1 - xa / this_lsd)) / px + self.bcs[dist][1]
 
-        # Clear old overlays and add spot markers
-        self.image_view.clear_overlays()
+        # Clear old spot/BC overlays (preserve axes); add fresh markers
+        self.image_view.clear_overlays('spots')
         # Red: spot position
         spot_item = pg.ScatterPlotItem([yn], [zn], size=12, pen=pg.mkPen('r', width=2), brush=None, symbol='o')
-        self.image_view.add_overlay(spot_item)
+        self.image_view.add_overlay(spot_item, 'spots')
         # Blue: beam center
         bc_item = pg.ScatterPlotItem([self.bcs[dist][0]], [self.bcs[dist][1]], size=10,
                                       pen=pg.mkPen('b', width=2), brush=None, symbol='star')
-        self.image_view.add_overlay(bc_item)
+        self.image_view.add_overlay(bc_item, 'spots')
         print(f"Spot {spot_nr}: frame={frame_to_read} yn={yn:.1f} zn={zn:.1f} ω={thisome:.1f}°")
 
     # ── Auto-detect ────────────────────────────────────────────────

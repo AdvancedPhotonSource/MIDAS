@@ -42,6 +42,7 @@ from midas_integrate.geometry import (
     build_tilt_matrix,
     pixel_to_REta,
     pixel_bin_intersect,
+    solid_angle_factor,
 )
 from midas_integrate.panel import (
     Panel,
@@ -253,7 +254,8 @@ def _build_map_python(
     raw_y_arr, raw_z_arr,
     r_lo, r_hi, eta_lo, eta_hi, n_r_bins, n_eta_bins,
     NrPixelsY, NrPixelsZ, Lsd, px,
-    solid_angle, polarization, pol_fraction, mask, flat,
+    solid_angle, polarization, pol_fraction, pol_plane_eta_rad, sa_factor,
+    mask, flat,
 ):
     n_bins = n_r_bins * n_eta_bins
     bin_entries: list[list[tuple[float, float, float, float, float]]] = \
@@ -301,17 +303,18 @@ def _build_map_python(
                     if area < 1e-5:
                         continue
                     corrected = area
-                    if solid_angle or polarization:
+                    if solid_angle:
+                        sa = float(sa_factor[j, i])
+                        if sa > 1e-12:
+                            corrected /= sa
+                    if polarization:
                         twoTheta = math.atan(Rt_c * px / Lsd)
-                        if solid_angle:
-                            c2t = math.cos(twoTheta)
-                            corrected /= (c2t * c2t * c2t)
-                        if polarization:
-                            s2t = math.sin(twoTheta)
-                            ce = math.cos(((EtaMin + EtaMax) * 0.5) * DEG2RAD)
-                            polFactor = 1.0 - pol_fraction * s2t * s2t * ce * ce
-                            if polFactor > 1e-6:
-                                corrected /= polFactor
+                        s2t = math.sin(twoTheta)
+                        eta_mid = ((EtaMin + EtaMax) * 0.5) * DEG2RAD
+                        ce = math.cos(eta_mid - pol_plane_eta_rad)
+                        polFactor = 1.0 - pol_fraction * s2t * s2t * ce * ce
+                        if polFactor > 1e-6:
+                            corrected /= polFactor
                     if flat is not None:
                         f = float(flat[j, i])
                         if f > 1e-12:
@@ -425,6 +428,18 @@ def build_map(
     cornerYZ = _build_pixel_quads(R_corners, Eta_corners)
     raw_y_arr, raw_z_arr = _inverse_transform_pixel_arrays(NY, NZ, params.TransOpt)
 
+    # Tilt-aware solid-angle factor Ω_pix / Ω_ref = Lsd² · (n̂·r) / |r|³
+    # for every detector pixel center. Reduces to cos³(2θ) for zero tilt.
+    yy, zz = np.meshgrid(np.arange(NY, dtype=np.float64),
+                         np.arange(NZ, dtype=np.float64))
+    sa_factor = solid_angle_factor(
+        yy, zz,
+        Ycen=params.BC_y, Zcen=params.BC_z,
+        TRs=TRs, Lsd=params.Lsd, px=px,
+    )
+    sa_factor = np.ascontiguousarray(sa_factor, dtype=np.float64)
+    pol_plane_eta_rad = float(getattr(params, "PolarizationPlaneEtaDeg", 0.0)) * (math.pi / 180.0)
+
     # ── Auto-load panel / distortion / residual-correction arrays ──────
     if panels is None and auto_load:
         loaded_panels = build_panels_from_params(params)
@@ -526,6 +541,7 @@ def build_map(
                 int(bool(params.SolidAngleCorrection)),
                 int(bool(params.PolarizationCorrection)),
                 params.PolarizationFraction,
+                pol_plane_eta_rad,
                 mask_arr, mask_present,
                 flat_arr, flat_present,
                 raw_y_arr.astype(np.float64),
@@ -546,6 +562,8 @@ def build_map(
                 int(bool(params.SolidAngleCorrection)),
                 int(bool(params.PolarizationCorrection)),
                 params.PolarizationFraction,
+                pol_plane_eta_rad,
+                sa_factor,
                 mask_arr, mask_present,
                 flat_arr, flat_present,
                 raw_y_arr.astype(np.float64),
@@ -603,6 +621,8 @@ def build_map(
             solid_angle=bool(params.SolidAngleCorrection),
             polarization=bool(params.PolarizationCorrection),
             pol_fraction=params.PolarizationFraction,
+            pol_plane_eta_rad=pol_plane_eta_rad,
+            sa_factor=sa_factor,
             mask=mask, flat=flat,
         )
         n_bins = n_r_bins * n_eta_bins

@@ -347,6 +347,8 @@ def map_kernel(
     NrPixelsY: int, NrPixelsZ: int,
     Lsd: float, px: float,
     solid_angle: int, polarization: int, pol_fraction: float,
+    pol_plane_eta_rad: float,
+    sa_factor: np.ndarray,        # (NZ, NY) tilt-aware solid-angle factor Ω/Ω_ref
     mask: np.ndarray,             # (NZ, NY); 0 = unmasked, 1 = masked. Empty array if no mask.
     mask_present: int,
     flat: np.ndarray,             # (NZ, NY); per-pixel relative sensitivity. Empty array if absent.
@@ -456,17 +458,18 @@ def map_kernel(
 
                     Rt_c = Rt_center[j, i]
                     corrected = area
-                    if solid_angle == 1 or polarization == 1:
+                    if solid_angle == 1:
+                        sa = sa_factor[j, i]
+                        if sa > 1e-12:
+                            corrected /= sa
+                    if polarization == 1:
                         twoTheta = math.atan(Rt_c * px / Lsd)
-                        if solid_angle == 1:
-                            c2t = math.cos(twoTheta)
-                            corrected /= (c2t * c2t * c2t)
-                        if polarization == 1:
-                            s2t = math.sin(twoTheta)
-                            ce = math.cos(((EtaMin + EtaMax) * 0.5) * DEG2RAD)
-                            polFactor = 1.0 - pol_fraction * s2t * s2t * ce * ce
-                            if polFactor > 1e-6:
-                                corrected /= polFactor
+                        s2t = math.sin(twoTheta)
+                        eta_mid_rad = ((EtaMin + EtaMax) * 0.5) * DEG2RAD
+                        ce = math.cos(eta_mid_rad - pol_plane_eta_rad)
+                        polFactor = 1.0 - pol_fraction * s2t * s2t * ce * ce
+                        if polFactor > 1e-6:
+                            corrected /= polFactor
                     if flat_present == 1:
                         f = flat[j, i]
                         if f > 1e-12:
@@ -671,6 +674,7 @@ def map_kernel_subpixel(
     parallax: float,
     SubPixelLevel: int, SubPixelCardinalWidth: float,
     solid_angle: int, polarization: int, pol_fraction: float,
+    pol_plane_eta_rad: float,
     mask: np.ndarray, mask_present: int,
     flat: np.ndarray, flat_present: int,
     raw_y_arr: np.ndarray, raw_z_arr: np.ndarray,
@@ -869,17 +873,36 @@ def map_kernel_subpixel(
                                 continue
 
                             corrected = area
-                            if solid_angle == 1 or polarization == 1:
+                            if solid_angle == 1:
+                                # Tilt-aware solid angle: use lab-frame
+                                # geometric position (panelLsd + tilt-rotated
+                                # detector-frame offset). n_hat is the first
+                                # column of TRs (rotation of (1,0,0)).
+                                Yc_sa = (-ypr_sub + Ycen) * px
+                                Zc_sa = ( zpr_sub - Zcen) * px
+                                ax = TRs[0, 1] * Yc_sa + TRs[0, 2] * Zc_sa
+                                ay = TRs[1, 1] * Yc_sa + TRs[1, 2] * Zc_sa
+                                az = TRs[2, 1] * Yc_sa + TRs[2, 2] * Zc_sa
+                                rX = (Lsd + dLsd_pix) + ax
+                                rY = ay
+                                rZ = az
+                                ndotr = (TRs[0, 0] * rX
+                                         + TRs[1, 0] * rY
+                                         + TRs[2, 0] * rZ)
+                                r2 = rX * rX + rY * rY + rZ * rZ
+                                if r2 > 1e-30 and ndotr > 0.0:
+                                    rmag = math.sqrt(r2)
+                                    sa = Lsd * Lsd * ndotr / (r2 * rmag)
+                                    if sa > 1e-12:
+                                        corrected /= sa
+                            if polarization == 1:
                                 twoTheta = math.atan(Rt_sub * px / Lsd)
-                                if solid_angle == 1:
-                                    c2t = math.cos(twoTheta)
-                                    corrected /= (c2t * c2t * c2t)
-                                if polarization == 1:
-                                    s2t = math.sin(twoTheta)
-                                    ce = math.cos(((EtaMin + EtaMax) * 0.5) * DEG2RAD)
-                                    polFactor = 1.0 - pol_fraction * s2t * s2t * ce * ce
-                                    if polFactor > 1e-6:
-                                        corrected /= polFactor
+                                s2t = math.sin(twoTheta)
+                                eta_mid_rad = ((EtaMin + EtaMax) * 0.5) * DEG2RAD
+                                ce = math.cos(eta_mid_rad - pol_plane_eta_rad)
+                                polFactor = 1.0 - pol_fraction * s2t * s2t * ce * ce
+                                if polFactor > 1e-6:
+                                    corrected /= polFactor
                             if flat_present == 1:
                                 f = flat[j, i]
                                 if f > 1e-12:

@@ -114,10 +114,20 @@ def run(
     torch_dtype = torch.float64 if dtype == "float64" else torch.float32
     if device == "cuda" and torch.cuda.is_available():
         torch_device = torch.device("cuda")
+    elif device == "mps" and torch.backends.mps.is_available():
+        # Apple-Silicon MPS only supports float32; if the caller asked for
+        # float64 we transparently downgrade and warn (matching the user-
+        # facing semantics of every other midas-* CLI on MPS).
+        if torch_dtype == torch.float64:
+            print("MPS requested but does not support float64; downgrading to float32")
+            torch_dtype = torch.float32
+        torch_device = torch.device("mps")
     else:
         torch_device = torch.device("cpu")
         if device == "cuda":
             print("CUDA requested but unavailable; falling back to CPU")
+        elif device == "mps":
+            print("MPS requested but unavailable; falling back to CPU")
 
     if deterministic and torch_dtype == torch.float64:
         try:

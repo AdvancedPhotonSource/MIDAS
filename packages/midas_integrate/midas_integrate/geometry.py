@@ -173,6 +173,57 @@ def _residual_corr_lookup_array(map_arr: np.ndarray,
             + v11 * fy       * fz)
 
 
+def solid_angle_factor(
+    Y, Z,
+    *,
+    Ycen: float, Zcen: float,
+    TRs: np.ndarray,
+    Lsd: float, px: float,
+):
+    """Tilt-aware solid-angle correction factor (vectorized).
+
+    Returns the dimensionless quantity ``Ω_pix / Ω_ref`` where
+    ``Ω_pix = A_pix · |n̂·r̂| / r²`` is the solid angle subtended by a
+    pixel at the sample, ``A_pix = px²``, and ``Ω_ref = A_pix / Lsd²`` is
+    the on-axis (zero-tilt, zero-2θ) reference. Equivalently:
+
+        Ω_pix / Ω_ref = Lsd² · (n̂ · r) / |r|³
+
+    where ``r`` is the lab-frame vector from sample to pixel and ``n̂``
+    is the lab-frame detector normal (the rotation of (1,0,0) by the
+    same tilt matrix used for the (Y, Z) → (R, η) projection).
+
+    For a flat detector aligned with the beam, ``n̂ = (1, 0, 0)`` and
+    ``r = (Lsd, y, z)`` with ``|r| = Lsd / cos(2θ)``, recovering the
+    flat-detector form ``cos³(2θ)``. For tilted detectors the local
+    incidence angle of the diffracted ray with respect to the *tilted*
+    detector normal is captured exactly.
+
+    The intensity correction divides the recorded counts by this
+    quantity (``corrected = area / SA_factor``), matching the convention
+    used in ``DetectorMapper`` so that the on-axis pixel has correction
+    1.0.
+    """
+    Y = np.asarray(Y, dtype=np.float64)
+    Z = np.asarray(Z, dtype=np.float64)
+    Yc = (-Y + Ycen) * px
+    Zc = ( Z - Zcen) * px
+    abcpr_x = TRs[0, 1] * Yc + TRs[0, 2] * Zc
+    abcpr_y = TRs[1, 1] * Yc + TRs[1, 2] * Zc
+    abcpr_z = TRs[2, 1] * Yc + TRs[2, 2] * Zc
+    XYZ_x = Lsd + abcpr_x
+    XYZ_y = abcpr_y
+    XYZ_z = abcpr_z
+    # n_hat = TRs · (1, 0, 0)^T = first column of TRs.
+    nx = TRs[0, 0]
+    ny = TRs[1, 0]
+    nz = TRs[2, 0]
+    n_dot_r = nx * XYZ_x + ny * XYZ_y + nz * XYZ_z
+    r_mag = np.sqrt(XYZ_x * XYZ_x + XYZ_y * XYZ_y + XYZ_z * XYZ_z)
+    r3 = np.maximum(r_mag * r_mag * r_mag, 1e-30)
+    return Lsd * Lsd * n_dot_r / r3
+
+
 def REta_to_YZ(R, Eta_deg):
     """Inverse polar: (R, Eta_deg) → (Y, Z) centered at beam (vectorized)."""
     Eta_rad = np.asarray(Eta_deg) * DEG2RAD

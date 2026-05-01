@@ -31,19 +31,54 @@ import numpy as np
 
 @dataclass
 class ParamsTest:
-    """A typed view of paramstest.txt that ``SaveBinData``/``IndexerOMP`` read."""
+    """A typed view of paramstest.txt that ``SaveBinData``/``IndexerOMP`` read.
+
+    The field set mirrors what ``FitSetupParamsAllZarr.c:1579-1634`` emits, so
+    ``write_paramstest`` can produce a byte-equivalent file. Older callers that
+    only set the indexing-relevant fields (``Lsd``, ``RingNumbers``, …) still
+    work — every C-only field has a benign default.
+    """
 
     Wavelength: float = 0.0
     Lsd: float = 0.0
     px: float = 200.0
     StepSizeOrient: float = 0.2
+    StepsizePos: float = 100.0
     MarginOme: float = 0.5
     MarginEta: float = 500.0
-    MarginRad: float = 500.0
+    MarginRad: float = 500.0          # legacy alias used internally
+    MarginRadius: float = 500.0       # value emitted under "MarginRadius"
     MarginRadial: float = 500.0
     EtaBinSize: float = 0.1
     OmeBinSize: float = 0.1
     NoSaveAll: int = 0
+
+    # Sample / illumination geometry (C "FitSetupParamsAllZarr" emits these)
+    MaxRingRad: float = 0.0
+    Rsample: float = 0.0
+    Hbeam: float = 0.0
+    BeamSize: float = 0.0
+    ExcludePoleAngle: float = 0.0     # = ZarrParams.MinEta
+    Wedge: float = 0.0
+    MargABC: float = 0.0
+    MargABG: float = 0.0
+    MinMatchesToAcceptFrac: float = 0.0
+
+    # Refined fit geometry (FitSetupZarr post-refine values; default to the
+    # raw geometry when DoFit=0).
+    LsdFit: float = 0.0
+    YBCFit: float = 0.0
+    ZBCFit: float = 0.0
+    tyFit: float = 0.0
+    tzFit: float = 0.0
+    p0: float = 0.0
+    p1: float = 0.0
+    p2: float = 0.0
+    p3: float = 0.0
+
+    # Refinement weights
+    WeightMask: float = 1.0
+    WeightFitRMSE: float = 0.0
 
     RingNumbers: List[int] = field(default_factory=list)
     RingRadii: List[float] = field(default_factory=list)
@@ -57,8 +92,10 @@ class ParamsTest:
     UseFriedelPairs: int = 1
 
     SpotsFileName: str = "InputAll.csv"
+    RefinementFileName: str = "InputAllExtraInfoFittingAll.csv"
     IDsFileName: str = "SpotsToIndex.csv"
     OutputFolder: str = ""
+    ResultFolder: str = ""
     GrainsFileName: str = ""
 
     raw: Dict[str, Any] = field(default_factory=dict)
@@ -80,9 +117,18 @@ _FLOAT_KEYS = {
     "StepSizeOrient", "StepsizeOrient", "StepSizePos", "StepsizePos",
     "MarginOme", "MarginEta", "MarginRad", "MarginRadius", "MarginRadial",
     "EtaBinSize", "OmeBinSize",
+    "MaxRingRad", "Rsample", "Hbeam", "BeamSize",
+    "ExcludePoleAngle", "Wedge",
+    "MargABC", "MargABG", "MinMatchesToAcceptFrac",
+    "LsdFit", "YBCFit", "ZBCFit", "tyFit", "tzFit",
+    "p0", "p1", "p2", "p3",
+    "WeightMask", "WeightFitRMSE",
 }
 _INT_KEYS = {"NoSaveAll", "SpaceGroup", "UseFriedelPairs"}
-_STR_KEYS = {"SpotsFileName", "IDsFileName", "OutputFolder", "GrainsFile"}
+_STR_KEYS = {
+    "SpotsFileName", "RefinementFileName", "IDsFileName",
+    "OutputFolder", "ResultFolder", "GrainsFile",
+}
 
 
 def read_paramstest(path: Union[str, Path]) -> ParamsTest:
@@ -122,11 +168,19 @@ def read_paramstest(path: Union[str, Path]) -> ParamsTest:
             elif key == "GrainsFile":
                 p.GrainsFileName = args[0]
             elif key in _FLOAT_KEYS:
-                attr = "Lsd" if key in ("Lsd", "Distance") else (
-                    "StepSizeOrient" if key in ("StepSizeOrient", "StepsizeOrient") else
-                    ("MarginRad" if key == "MarginRadius" else key)
-                )
+                if key in ("Lsd", "Distance"):
+                    attr = "Lsd"
+                elif key in ("StepSizeOrient", "StepsizeOrient"):
+                    attr = "StepSizeOrient"
+                elif key in ("StepSizePos", "StepsizePos"):
+                    attr = "StepsizePos"
+                else:
+                    attr = key
                 setattr(p, attr, float(args[0]))
+                # Mirror MarginRadius -> MarginRad (legacy alias) so old callers
+                # that read .MarginRad still see the right value.
+                if key == "MarginRadius":
+                    p.MarginRad = float(args[0])
             elif key in _INT_KEYS:
                 setattr(p, key, int(args[0]))
             elif key in _STR_KEYS:
@@ -137,35 +191,75 @@ def read_paramstest(path: Union[str, Path]) -> ParamsTest:
 
 
 def write_paramstest(p: ParamsTest, path: Union[str, Path]) -> None:
-    """Write a ``ParamsTest`` back out as paramstest.txt (used by FitSetup)."""
+    """Write a ``ParamsTest`` as ``paramstest.txt``.
+
+    Mirrors ``FitSetupParamsAllZarr.c:1579-1634`` exactly: same key order,
+    same trailing ``;`` on numeric lines, same %f formatting (default ``%f``
+    is 6 fractional digits in C, which we replicate via Python ``%f``).
+    """
+    def f6(v: float) -> str:
+        return f"{v:f}"
+
     with open(path, "w") as fp:
-        if p.Wavelength:
-            fp.write(f"Wavelength {p.Wavelength}\n")
-        if p.Lsd:
-            fp.write(f"Lsd {p.Lsd}\n")
-        if p.px:
-            fp.write(f"px {p.px}\n")
-        fp.write(f"StepSizeOrient {p.StepSizeOrient}\n")
-        fp.write(f"MarginOme {p.MarginOme}\n")
-        fp.write(f"MarginEta {p.MarginEta}\n")
-        fp.write(f"MarginRad {p.MarginRad}\n")
-        fp.write(f"EtaBinSize {p.EtaBinSize}\n")
-        fp.write(f"OmeBinSize {p.OmeBinSize}\n")
-        fp.write(f"NoSaveAll {p.NoSaveAll}\n")
-        fp.write(f"SpaceGroup {p.SpaceGroup}\n")
-        fp.write(f"UseFriedelPairs {p.UseFriedelPairs}\n")
+        # 1. Lattice + crystal block
+        fp.write(
+            "LatticeParameter "
+            + " ".join(f6(v) for v in p.LatticeConstant) + ";\n"
+        )
+        fp.write(f"MaxRingRad {f6(p.MaxRingRad)};\n")
+        fp.write(f"SpaceGroup {p.SpaceGroup};\n")
+        fp.write(f"Wavelength {f6(p.Wavelength)};\n")
+        fp.write(f"Distance {f6(p.LsdFit if p.LsdFit else p.Lsd)};\n")
+        fp.write(f"Rsample {f6(p.Rsample)};\n")
+        fp.write(f"Hbeam {f6(p.Hbeam)};\n")
+        fp.write(f"px {f6(p.px)};\n")
+        fp.write(f"BeamSize {f6(p.BeamSize)};\n")
+        fp.write(f"StepsizePos {f6(p.StepsizePos)};\n")
+        fp.write(f"StepsizeOrient {f6(p.StepSizeOrient)};\n")
+        fp.write(f"MarginRadius {f6(p.MarginRadius if p.MarginRadius else p.MarginRad)};\n")
+        fp.write(f"OmeBinSize {f6(p.OmeBinSize)};\n")
+        fp.write(f"EtaBinSize {f6(p.EtaBinSize)};\n")
+        fp.write(f"ExcludePoleAngle {f6(p.ExcludePoleAngle)};\n")
         for r in p.RingNumbers:
-            fp.write(f"RingNumbers {r}\n")
+            fp.write(f"RingNumbers {r};\n")
         for r in p.RingRadii:
-            fp.write(f"RingRadii {r}\n")
+            fp.write(f"RingRadii {f6(r)};\n")
+        fp.write(f"UseFriedelPairs {p.UseFriedelPairs};\n")
+        fp.write(f"Wedge {f6(p.Wedge)};\n")
         for omr in p.OmegaRanges:
-            fp.write(f"OmegaRange {omr[0]} {omr[1]}\n")
+            fp.write(f"OmegaRange {f6(omr[0])} {f6(omr[1])};\n")
         for bx in p.BoxSizes:
-            fp.write(f"BoxSize {bx[0]} {bx[1]} {bx[2]} {bx[3]}\n")
-        if p.LatticeConstant != (0.0, 0.0, 0.0, 90.0, 90.0, 90.0):
-            fp.write("LatticeParameter " + " ".join(str(v) for v in p.LatticeConstant) + "\n")
+            fp.write(
+                f"BoxSize {f6(bx[0])} {f6(bx[1])} {f6(bx[2])} {f6(bx[3])};\n"
+            )
+        fp.write(f"MarginEta {f6(p.MarginEta)};\n")
+        fp.write(f"MarginOme {f6(p.MarginOme)};\n")
+        fp.write(f"MargABC {f6(p.MargABC)};\n")
+        fp.write(f"MargABG {f6(p.MargABG)};\n")
+        fp.write(
+            f"MarginRadial {f6(p.MarginRadial if p.MarginRadial else p.MarginRad)};\n"
+        )
+        fp.write(f"MinMatchesToAcceptFrac {f6(p.MinMatchesToAcceptFrac)};\n")
+        # 2. File-name + path block (no trailing semicolons in C)
+        fp.write(f"SpotsFileName {p.SpotsFileName}\n")
+        fp.write(f"RefinementFileName {p.RefinementFileName}\n")
         if p.OutputFolder:
             fp.write(f"OutputFolder {p.OutputFolder}\n")
+        if p.ResultFolder:
+            fp.write(f"ResultFolder {p.ResultFolder}\n")
+        fp.write(f"IDsFileName {p.IDsFileName}\n")
+        # 3. Refined-geometry block (no trailing semicolons in C)
+        fp.write(f"LsdFit {f6(p.LsdFit if p.LsdFit else p.Lsd)}\n")
+        fp.write(f"YBCFit {f6(p.YBCFit)}\n")
+        fp.write(f"ZBCFit {f6(p.ZBCFit)}\n")
+        fp.write(f"tyFit {f6(p.tyFit)}\n")
+        fp.write(f"tzFit {f6(p.tzFit)}\n")
+        fp.write(f"p0 {f6(p.p0)}\n")
+        fp.write(f"p1 {f6(p.p1)}\n")
+        fp.write(f"p2 {f6(p.p2)}\n")
+        fp.write(f"p3 {f6(p.p3)}\n")
+        fp.write(f"WeightMask {f6(p.WeightMask)}\n")
+        fp.write(f"WeightFitRMSE {f6(p.WeightFitRMSE)}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +277,7 @@ REQUIRED_FITSETUP_KEYS = (
 )
 
 OPTIONAL_FITSETUP_KEYS_FLOAT = (
-    "Width", "WidthTthPx", "Hbeam", "Rsample", "BeamThickness",
+    "Width", "WidthTthPx", "Hbeam", "Rsample", "BeamThickness", "BeamSize",
     "RhoD", "MaxRingRad",
     "MarginRadius", "MarginRadial", "MarginEta", "MarginOme",
     "EtaBinSize", "OmeBinSize",
@@ -197,12 +291,14 @@ OPTIONAL_FITSETUP_KEYS_FLOAT = (
     "MaxOmeSpotIDsToIndex", "MinOmeSpotIDsToIndex",
     "WeightFitRMSE", "WeightMask",
     "tInt", "tGap",
+    "Vsample", "DiscArea",
 )
 OPTIONAL_FITSETUP_KEYS_INT = (
     "DoFit", "UseFriedelPairs", "OverallRingToIndex",
     "MaxNFrames", "SkipFrame", "LayerNr",
     "NPanelsY", "NPanelsZ", "PanelSizeY", "PanelSizeZ",
     "SpaceGroup",
+    "DiscModel",
 )
 OPTIONAL_FITSETUP_KEYS_STR = (
     "PanelShiftsFile", "ResidualCorrectionMap", "ResultFolder",
@@ -237,6 +333,10 @@ class ZarrParams:
     Hbeam: float = 0.0
     Rsample: float = 0.0
     BeamThickness: float = 0.0
+    BeamSize: float = 0.0
+    Vsample: float = 0.0
+    DiscModel: int = 0
+    DiscArea: float = 0.0
     RhoD: float = 0.0
     MaxRingRad: float = 0.0
     NrPixelsY: int = 0
@@ -341,24 +441,67 @@ class ZarrParams:
             self.Width = self.WidthOrig
 
     def to_paramstest(self) -> ParamsTest:
-        """Convert to a ``ParamsTest`` view (for downstream binning / indexing)."""
+        """Convert to a ``ParamsTest`` view (for downstream binning / indexing).
+
+        Populates the full C-equivalent paramstest.txt schema (Lattice / sample
+        / margins / refinement) so ``write_paramstest`` can produce a
+        byte-equivalent file. The refined fit fields (``LsdFit`` etc.) default
+        to the raw geometry values; ``fit_setup`` overwrites them after a
+        DoFit=1 refinement.
+        """
         pt = ParamsTest()
+        # Geometry / crystal
         pt.Wavelength = self.Wavelength
         pt.Lsd = self.Lsd
         pt.px = self.PixelSize
+        pt.LatticeConstant = self.LatticeConstant
+        pt.SpaceGroup = self.SpaceGroup
+        pt.MaxRingRad = self.MaxRingRad
+        # Sample / illumination
+        pt.Rsample = self.Rsample
+        pt.Hbeam = self.Hbeam
+        # C alias: paramstest's "BeamSize" is read from Zarr key "BeamThickness"
+        # (FitSetupParamsAllZarr.c:751-754). Prefer explicit BeamSize when set,
+        # else fall back to BeamThickness (matches the C aliasing).
+        pt.BeamSize = self.BeamSize if self.BeamSize else self.BeamThickness
+        pt.ExcludePoleAngle = self.MinEta
+        pt.Wedge = self.Wedge
+        # Search / refinement margins + steps
         pt.StepSizeOrient = self.StepSizeOrient
+        pt.StepsizePos = self.StepSizePos
         pt.MarginOme = self.MarginOme
         pt.MarginEta = self.MarginEta
         pt.MarginRad = self.MarginRadius
+        pt.MarginRadius = self.MarginRadius
+        pt.MarginRadial = self.MarginRadial
+        pt.MargABC = self.MargABC
+        pt.MargABG = self.MargABG
+        pt.MinMatchesToAcceptFrac = self.MinMatchesToAcceptFrac
         pt.EtaBinSize = self.EtaBinSize
         pt.OmeBinSize = self.OmeBinSize
-        pt.SpaceGroup = self.SpaceGroup
         pt.UseFriedelPairs = self.UseFriedelPairs
-        pt.LatticeConstant = self.LatticeConstant
+        # Distortion polynomial (FitSetupZarr writes p0..p3 only)
+        pt.p0 = self.p0
+        pt.p1 = self.p1
+        pt.p2 = self.p2
+        pt.p3 = self.p3
+        # Refinement weights
+        pt.WeightMask = self.WeightMask
+        pt.WeightFitRMSE = self.WeightFitRMSE
+        # Refined fit defaults: when DoFit=0 the C code writes the raw geometry
+        # values into the *Fit fields. Match that.
+        pt.LsdFit = self.Lsd
+        pt.YBCFit = self.YCen
+        pt.ZBCFit = self.ZCen
+        pt.tyFit = self.ty
+        pt.tzFit = self.tz
+        # Repeated keys
         pt.OmegaRanges = list(self.OmegaRanges)
         pt.BoxSizes = list(self.BoxSizes)
         pt.RingNumbers = [int(rn) for (rn, _) in self.RingThresh]
+        # File / output paths (C also emits ResultFolder + RefinementFileName)
         pt.OutputFolder = self.ResultFolder
+        pt.ResultFolder = self.ResultFolder
         return pt
 
 

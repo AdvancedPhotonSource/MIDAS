@@ -463,19 +463,31 @@ def _c_compat_visited_mask(
     return visited & above_thresh
 
 
-def _default_seed_group_size() -> int:
+def _default_seed_group_size(device: torch.device | None = None) -> int:
     """Resolve `seed_group_size` from env (`MIDAS_INDEX_GROUP_SIZE`) or default.
 
     Larger groups amortize per-group Python/kernel-launch overhead and pack the
     forward+match into fewer big batches (better SM utilization), at the cost
-    of more GPU memory. 64 is a safe default on H100 (80GB) for the 500-grain
-    Cu reference. CPU defaults to 32 since CPU memory pressure scales worse.
+    of more device memory. ``MIDAS_INDEX_GROUP_SIZE`` overrides the auto-pick.
+
+    Auto-pick by device:
+      * cuda  : 64  (sized for an 80 GB H100)
+      * mps   : 1   (Apple-Silicon shared 64-128 GB; ``_compute_avg_ia``
+                     materialises ~18× (N, T) tensors per group, so even
+                     2 seeds blow past the MPS 75 % watermark on
+                     ~1500-grain decks)
+      * cpu   : 8   (CPU has page-cache headroom that MPS lacks)
     """
     import os
     raw = os.environ.get("MIDAS_INDEX_GROUP_SIZE")
     if raw is not None:
         return max(1, int(raw))
-    return 64
+    if device is not None:
+        if device.type == "cuda":
+            return 64
+        if device.type == "mps":
+            return 1
+    return 8
 
 
 def run_block(
@@ -508,10 +520,7 @@ def run_block(
         return IndexerResult(block_nr=block_nr, n_blocks=n_blocks, seeds=[])
 
     if seed_group_size is None:
-        seed_group_size = _default_seed_group_size()
-
-    if seed_group_size is None:
-        seed_group_size = _default_seed_group_size()
+        seed_group_size = _default_seed_group_size(ctx.device)
 
     seeds_block = spot_ids[start:end_inclusive + 1]
     n_seeds = int(seeds_block.numel())

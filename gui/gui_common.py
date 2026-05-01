@@ -433,16 +433,33 @@ class MIDASImageView(QtWidgets.QWidget):
         """Set intensity levels (proxied to internal ImageView)."""
         self._iv.setLevels(lo, hi)
 
-    def add_overlay(self, item):
-        """Add a PlotItem overlay (rings, markers, etc.)."""
-        self._iv.addItem(item)
-        self._overlay_items.append(item)
+    def add_overlay(self, item, category='default'):
+        """Add a PlotItem overlay (rings, markers, etc.).
 
-    def clear_overlays(self):
-        """Remove all overlay items."""
-        for item in self._overlay_items:
-            self._iv.removeItem(item)
-        self._overlay_items.clear()
+        ``category`` is a free-form tag enabling selective clearing via
+        :meth:`clear_overlays`. Items added without a category go to ``'default'``.
+        """
+        self._iv.addItem(item)
+        self._overlay_items.append((category, item))
+
+    def clear_overlays(self, category=None):
+        """Remove overlay items.
+
+        ``category=None`` (default) removes everything. Pass a specific tag
+        (e.g. ``'rings'``, ``'axes'``) to remove only items in that category.
+        """
+        keep = []
+        for entry in self._overlay_items:
+            # Backward compat: legacy entries may be bare items (no tuple)
+            if isinstance(entry, tuple) and len(entry) == 2:
+                cat, item = entry
+            else:
+                cat, item = 'default', entry
+            if category is None or cat == category:
+                self._iv.removeItem(item)
+            else:
+                keep.append((cat, item))
+        self._overlay_items = keep
 
     def export_png(self, filename=None):
         """Export current view to PNG."""
@@ -601,3 +618,160 @@ def add_shortcut(parent, key, callback, context=QtCore.Qt.WindowShortcut):
     shortcut.setContext(context)
     shortcut.activated.connect(callback)
     return shortcut
+
+
+def draw_lab_frame_axes(image_view, bc_y, bc_z, ny, nz,
+                         category='axes',
+                         color='#FFD700',
+                         eta_tick_color='#888888',
+                         font_size=12):
+    """Draw MIDAS lab-frame axes anchored at (bc_y, bc_z).
+
+    Convention (independent of detector readout / display origin):
+      +Y → display LEFT,  +Z → display UP,  +X → INTO page (⊗ at BC).
+      η = 0 toward +Z (top), +90° on −Y_lab side (display-right),
+      ±180° at bottom, −90° on +Y_lab side (display-left).
+      An arc from η=0 to η=+45° with an arrowhead shows the η-sweep
+      direction.
+
+    Compatible with both `'bl'` and `'br'` :class:`MIDASImageView` origins
+    by reading ``image_view._origin`` and flipping the data-X sign.
+
+    All overlay items are tagged with ``category`` (default ``'axes'``)
+    so they can be cleared independently via
+    ``image_view.clear_overlays(category)``.
+
+    Parameters
+    ----------
+    image_view : MIDASImageView
+        Target view to draw the overlay on.
+    bc_y, bc_z : float
+        Beam-center pixel coordinates in display data space (the same
+        coordinate system the cursor reports).
+    ny, nz : int
+        Image dimensions; used only to size the arrows sensibly.
+    """
+    import math
+    image_view.clear_overlays(category)
+
+    # Arrow length: 10% of the smaller image dim, clamped to a sensible range.
+    L = max(40.0, min(200.0, 0.10 * min(ny, nz)))
+    head = max(10.0, L * 0.18)
+
+    origin = getattr(image_view, '_origin', 'bl')
+    # Sign of data-x that visually appears on display-LEFT:
+    #   'bl': display-left = pixel −x  → y_sign = −1
+    #   'br': display-left = pixel +x  → y_sign = +1
+    y_sign = +1.0 if origin == 'br' else -1.0
+
+    text_pen  = pg.mkPen('w')
+    text_fill = pg.mkBrush(0, 0, 0, 200)
+    pen       = pg.mkPen(color, width=2.5)
+    arc_pen   = pg.mkPen(color, width=2.0)
+
+    # Fonts scale off the caller-supplied label size. ⊗ uses a larger size so
+    # the beam-direction glyph reads clearly; η ticks match the label size.
+    label_font = QtGui.QFont(); label_font.setPointSize(int(font_size)); label_font.setBold(True)
+    glyph_font = QtGui.QFont(); glyph_font.setPointSize(max(int(font_size * 1.5), int(font_size) + 4)); glyph_font.setBold(True)
+    eta_font   = QtGui.QFont(); eta_font.setPointSize(int(font_size))
+
+    def shaft_with_head(x0, y0, x1, y1):
+        """Single polyline = shaft + open V-shaped arrowhead at (x1,y1)."""
+        dx, dy = x1 - x0, y1 - y0
+        length = math.hypot(dx, dy)
+        if length < 1e-9:
+            return [x0, x1], [y0, y1]
+        ux, uy = dx / length, dy / length
+        nx, ny_ = -uy, ux
+        base_x = x1 - ux * head
+        base_y = y1 - uy * head
+        wing = head * 0.55
+        p1x, p1y = base_x + nx * wing, base_y + ny_ * wing
+        p2x, p2y = base_x - nx * wing, base_y - ny_ * wing
+        return ([x0, x1, p1x, x1, p2x],
+                [y0, y1, p1y, y1, p2y])
+
+    # +Y arrow (visually display-LEFT)
+    xs, ys = shaft_with_head(bc_y, bc_z, bc_y + y_sign * L, bc_z)
+    image_view.add_overlay(pg.PlotDataItem(xs, ys, pen=pen, connect='all'),
+                            category)
+    # +Z arrow (visually display-UP)
+    xs, ys = shaft_with_head(bc_y, bc_z, bc_y, bc_z + L)
+    image_view.add_overlay(pg.PlotDataItem(xs, ys, pen=pen, connect='all'),
+                            category)
+
+    # +Y / +Z labels at arrow tips
+    for txt, dx, dy in (('+Y', y_sign * (L + head * 1.6), 0.0),
+                        ('+Z', 0.0,                       L + head * 1.6)):
+        lbl = pg.TextItem(txt, color=color, anchor=(0.5, 0.5),
+                          border=text_pen, fill=text_fill)
+        lbl.setFont(label_font)
+        lbl.setPos(bc_y + dx, bc_z + dy)
+        image_view.add_overlay(lbl, category)
+
+    # ⊗ glyph at BC + label
+    glyph = pg.TextItem('⊗', color=color, anchor=(0.5, 0.5),
+                        border=text_pen, fill=text_fill)
+    glyph.setFont(glyph_font)
+    glyph.setPos(bc_y, bc_z)
+    image_view.add_overlay(glyph, category)
+
+    x_lbl = pg.TextItem('+X (beam)', color=color, anchor=(0, 0.5),
+                        border=text_pen, fill=text_fill)
+    x_lbl.setFont(label_font)
+    x_lbl.setPos(bc_y + y_sign * head * 1.4, bc_z - head * 1.4)
+    image_view.add_overlay(x_lbl, category)
+
+    # η sweep arc from 0° to +45°, plus an arrowhead at the +45° end.
+    # Position in data coords: (bc_y + (-y_sign) * R * sin(η),  bc_z + R * cos(η))
+    # so that η=+90° maps to display-right (= −Y_lab side) on either origin.
+    R_arc = L * 0.85
+    n_pts = 24
+    eta_deg = np.linspace(0.0, 45.0, n_pts)
+    eta_rad = np.deg2rad(eta_deg)
+    arc_x = bc_y + (-y_sign) * R_arc * np.sin(eta_rad)
+    arc_y = bc_z + R_arc * np.cos(eta_rad)
+    image_view.add_overlay(pg.PlotDataItem(arc_x, arc_y, pen=arc_pen),
+                            category)
+
+    # Arrowhead-only at arc end, tangent in direction of increasing η.
+    end = math.radians(45.0)
+    tan_x = (-y_sign) * math.cos(end)
+    tan_y = -math.sin(end)
+    head_size = head * 0.9
+    tip_x, tip_y = float(arc_x[-1]), float(arc_y[-1])
+    # base point for the V
+    bx = tip_x - tan_x * head_size
+    by = tip_y - tan_y * head_size
+    # perpendicular for the wings
+    nx_, ny_ = -tan_y, tan_x
+    wing = head_size * 0.55
+    p1x, p1y = bx + nx_ * wing, by + ny_ * wing
+    p2x, p2y = bx - nx_ * wing, by - ny_ * wing
+    image_view.add_overlay(
+        pg.PlotDataItem([p1x, tip_x, p2x], [p1y, tip_y, p2y],
+                         pen=arc_pen, connect='all'),
+        category)
+
+    # Tiny radial tick at η=0 (just outside the arc) so η=0 has its own marker
+    # independent of the +Z arrow.
+    tick_inner = R_arc * 1.04
+    tick_outer = R_arc * 1.18
+    image_view.add_overlay(
+        pg.PlotDataItem([bc_y, bc_y], [bc_z + tick_inner, bc_z + tick_outer],
+                         pen=arc_pen),
+        category)
+
+    # η cardinal labels — placed comfortably beyond the +Y/+Z arrow tip
+    # labels (which sit at radius `L + head*1.6`) so they never overlap.
+    arrow_label_R = L + head * 1.6
+    R_eta = arrow_label_R + max(30.0, 0.25 * L)
+    for dx, dy, txt in (
+            ( 0.0,           +R_eta, 'η=0°'),
+            (-y_sign*R_eta,   0.0,   'η=+90°'),
+            ( 0.0,           -R_eta, 'η=±180°'),
+            ( y_sign*R_eta,   0.0,   'η=−90°')):
+        tick = pg.TextItem(txt, color=eta_tick_color, anchor=(0.5, 0.5))
+        tick.setFont(eta_font)
+        tick.setPos(bc_y + dx, bc_z + dy)
+        image_view.add_overlay(tick, category)

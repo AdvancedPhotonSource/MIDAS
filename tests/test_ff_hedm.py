@@ -29,6 +29,15 @@ def parse_args():
     parser.add_argument("--backend", choices=["c", "torch"], default="c",
                         help="Peak-fitting backend: 'c' (PeaksFittingOMPZarrRefactor) or 'torch' (peakfit_torch). "
                              "Forwarded to ff_MIDAS.py as -peakFitGPU 0/1.")
+    parser.add_argument("--refine-backend", choices=["c", "torch"], default="c",
+                        help="Refinement backend: 'c' (FitPosOrStrainsOMP) or 'torch' (midas-fit-grain). "
+                             "Forwarded to ff_MIDAS.py as -useTorchRefiner 0/1.")
+    parser.add_argument("--refine-solver", choices=["lbfgs", "adam", "lm", "nelder_mead"],
+                        default="lbfgs",
+                        help="Optimizer for the torch refiner; ignored unless --refine-backend=torch.")
+    parser.add_argument("--refine-loss", choices=["pixel", "angular", "internal_angle"],
+                        default="pixel",
+                        help="Residual definition for the torch refiner; ignored unless --refine-backend=torch.")
     parser.add_argument("--nGrains", type=int, default=0,
                         help="Generate N random grains instead of using existing GrainsSim.csv (0 = use existing)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for grain generation")
@@ -542,6 +551,9 @@ def main():
         "-dataFN", final_zip_name.name,
         "-convertFiles", "0",
         "-peakFitGPU", "1" if args.backend == "torch" else "0",
+        "-useTorchRefiner", "1" if args.refine_backend == "torch" else "0",
+        "-refineSolver", args.refine_solver,
+        "-refineLoss", args.refine_loss,
     ]
 
     print(f"Running pipeline: {' '.join(cmd)}")

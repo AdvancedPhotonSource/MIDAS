@@ -111,7 +111,7 @@ int main(int argc, char *argv[]) {
       Hbeam;
   double PowderIntIn = 0;
   int DiscModel = 0;
-  double DiscArea = 0, Vsample = 0, width = -1, widthOrig;
+  double DiscArea = 0, Vsample = 0, width = -1, widthOrig = -1.0;
   int locRingThresh, nRings = 0;
   while ((zip_stat_index(arch, count, 0, finfo)) == 0) {
     if (strstr(finfo->name,
@@ -275,13 +275,13 @@ int main(int argc, char *argv[]) {
   fgets(aline, 1000, Infile);
   int counter = 0, RingNr;
   double **SpotsMat;
-  /* +nRings+1: the read loop does SpotsMat[counter][13] = -1 at entry, then
-     counter++ for each matching ring inside the loop, then a sentinel read
-     of SpotsMat[counter][13] AFTER the ring loop. On the last CSV row,
-     counter can advance by up to nRings past the pre-counted row count, so
-     allocate guard slots to keep the sentinel read in-bounds. */
+  /* Worst case: every CSV row matches every ring (ring tolerance Width is
+     wider than any inter-ring spacing).  Counter advances by nRings per row
+     plus a sentinel read after the inner loop, so allocate
+     nLinesSpotsMat * nRings + 1 slots.  +1 is the sentinel read at line 394
+     after the last ring loop. */
   size_t nAllocSpotsMat =
-      (nLinesSpotsMat > 0 ? nLinesSpotsMat : 1) + (size_t)nRings + 1;
+      (nLinesSpotsMat > 0 ? nLinesSpotsMat : 1) * (size_t)(nRings > 0 ? nRings : 1) + 1;
   SpotsMat = allocMatrix(nAllocSpotsMat, 19);
   if (SpotsMat == NULL) {
     printf("Could not allocate SpotsMat for %zu rows. Exiting.\n",
