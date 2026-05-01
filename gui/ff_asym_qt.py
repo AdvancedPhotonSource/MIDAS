@@ -51,6 +51,7 @@ if _utils_dir not in sys.path:
 from gui_common import (MIDASImageView, apply_theme, get_colormap,
                          AsyncWorker, LogPanel, add_shortcut, COLORMAPS,
                          draw_lab_frame_axes)
+import multidet as _md
 
 try:
     import midas_config
@@ -403,6 +404,14 @@ class FFViewer(QtWidgets.QMainWindow):
         # Lab-frame axes overlay
         self.show_axes = False
 
+        # Multi-detector mode
+        self.multi_mode = False
+        self._det_states = [_md.DetectorState() for _ in range(4)]
+        self.composite_op = 'max'                # 'max' or 'sum'
+        self.big_det_size = 4096
+        self._big_det_auto = True                # autopick on first param load
+        self._composite_frame_cache = (None, -1) # (frame_idx, n_dets) → array
+
         # Crystallography
         self.sg = 225
         self.wl = 0.172979
@@ -455,7 +464,12 @@ class FFViewer(QtWidgets.QMainWindow):
         # ── Control Panels ──
         ctrl = QtWidgets.QHBoxLayout()
         ctrl.setSpacing(4)
-        ctrl.addWidget(self._build_file_panel(), stretch=3)
+        # Stack the single-detector and multi-detector data-source panels;
+        # the toolbar Multi-Det checkbox swaps which one is visible.
+        self._file_stack = QtWidgets.QStackedWidget()
+        self._file_stack.addWidget(self._build_file_panel())     # 0: single
+        self._file_stack.addWidget(self._build_multi_panel())    # 1: multi
+        ctrl.addWidget(self._file_stack, stretch=3)
         ctrl.addWidget(self._build_image_display_panel(), stretch=3)
         ctrl.addWidget(self._build_processing_panel(), stretch=2)
         main_layout.addLayout(ctrl)
@@ -556,6 +570,21 @@ class FFViewer(QtWidgets.QMainWindow):
             "Use this to verify ImTransOpt — features should be in the\n"
             "physically expected lab-frame quadrant.")
         tb.addWidget(self.axes_check)
+
+        # Multi-detector mode + composite operator
+        self.multi_check = QtWidgets.QCheckBox("Multi-Det")
+        self.multi_check.setToolTip(
+            "Composite up to 4 GE detector images by tx-rotation about a\n"
+            "common center. Each detector reads its own ps.txt for BC, tx,\n"
+            "ImTransOpt, dataLoc, BadPxIntensity, GapIntensity.")
+        tb.addWidget(self.multi_check)
+
+        tb.addWidget(QtWidgets.QLabel("Composite:"))
+        self.composite_combo = QtWidgets.QComboBox()
+        self.composite_combo.addItems(['max', 'sum'])
+        self.composite_combo.setCurrentText(self.composite_op)
+        self.composite_combo.setEnabled(False)   # only meaningful in multi-mode
+        tb.addWidget(self.composite_combo)
 
         # Intensity controls (moved from Display panel)
         tb.addWidget(QtWidgets.QLabel("Min I:"))
@@ -749,6 +778,98 @@ class FFViewer(QtWidgets.QMainWindow):
 
         return grp
 
+    # ── Multi-detector data-source panel ───────────────────────────
+
+    def _build_multi_panel(self):
+        """4 detector cards with Data / Dark / Param pickers + Enable.
+
+        Each card mirrors the structure in gui_view_raw_ge.py — but the
+        composite is rendered into the existing image_view so all overlays
+        (rings, lab axes, intensity controls, frame nav) keep working.
+        """
+        grp = QtWidgets.QGroupBox(
+            "Multi-Detector Data Source — load one ps.txt per detector")
+        outer = QtWidgets.QVBoxLayout(grp)
+        outer.setContentsMargins(4, 4, 4, 4)
+        outer.setSpacing(2)
+
+        self._det_widgets = []
+        for i in range(4):
+            frame = QtWidgets.QFrame()
+            frame.setFrameShape(QtWidgets.QFrame.StyledPanel)
+            lay = QtWidgets.QGridLayout(frame)
+            lay.setContentsMargins(4, 2, 4, 2)
+            lay.setSpacing(2)
+
+            en = QtWidgets.QCheckBox(f"GE{i+1}")
+            en.setChecked(True)
+            en.setToolTip(f"Include detector GE{i+1} in the composite")
+            en.toggled.connect(lambda c, idx=i: self._on_det_enabled(idx, c))
+            lay.addWidget(en, 0, 0, 2, 1)
+
+            # Row 0: Data + Dark
+            lay.addWidget(QtWidgets.QLabel("Data"), 0, 1)
+            data_lbl = QtWidgets.QLabel("(none)")
+            data_lbl.setStyleSheet("color: gray;")
+            data_lbl.setMinimumWidth(120)
+            lay.addWidget(data_lbl, 0, 2)
+            data_btn = QtWidgets.QPushButton("…"); data_btn.setFixedWidth(28)
+            data_btn.clicked.connect(lambda _, idx=i: self._on_pick_det_data(idx))
+            lay.addWidget(data_btn, 0, 3)
+
+            lay.addWidget(QtWidgets.QLabel("Dark"), 0, 4)
+            dark_lbl = QtWidgets.QLabel("(same)")
+            dark_lbl.setStyleSheet("color: gray;")
+            dark_lbl.setMinimumWidth(100)
+            lay.addWidget(dark_lbl, 0, 5)
+            dark_btn = QtWidgets.QPushButton("…"); dark_btn.setFixedWidth(28)
+            dark_btn.clicked.connect(lambda _, idx=i: self._on_pick_det_dark(idx))
+            lay.addWidget(dark_btn, 0, 6)
+            dark_clr = QtWidgets.QPushButton("✕"); dark_clr.setFixedWidth(24)
+            dark_clr.setToolTip("Clear external dark (use darkLoc inside data file)")
+            dark_clr.clicked.connect(lambda _, idx=i: self._on_clear_det_dark(idx))
+            lay.addWidget(dark_clr, 0, 7)
+
+            # Row 1: Param + status
+            lay.addWidget(QtWidgets.QLabel("Param"), 1, 1)
+            param_lbl = QtWidgets.QLabel("(none)")
+            param_lbl.setStyleSheet("color: gray;")
+            param_lbl.setMinimumWidth(120)
+            lay.addWidget(param_lbl, 1, 2)
+            param_btn = QtWidgets.QPushButton("…"); param_btn.setFixedWidth(28)
+            param_btn.clicked.connect(lambda _, idx=i: self._on_pick_det_param(idx))
+            lay.addWidget(param_btn, 1, 3)
+
+            status_lbl = QtWidgets.QLabel("")
+            status_lbl.setStyleSheet("color: #888888; font-size: 9pt;")
+            lay.addWidget(status_lbl, 1, 4, 1, 4)
+
+            outer.addWidget(frame)
+            self._det_widgets.append(dict(
+                enable=en, data_lbl=data_lbl, dark_lbl=dark_lbl,
+                param_lbl=param_lbl, status_lbl=status_lbl))
+
+        # BigDetSize control + Save composite
+        bottom = QtWidgets.QHBoxLayout()
+        bottom.addWidget(QtWidgets.QLabel("BigDetSize:"))
+        self.bigdet_spin = QtWidgets.QSpinBox()
+        self.bigdet_spin.setRange(256, 16384)
+        self.bigdet_spin.setSingleStep(256)
+        self.bigdet_spin.setValue(self.big_det_size)
+        self.bigdet_spin.setToolTip(
+            "Composite canvas size (pixels per side). Auto-pick = 2×max(NrPixels)\n"
+            "until you change this manually.")
+        self.bigdet_spin.valueChanged.connect(self._on_bigdet_changed)
+        bottom.addWidget(self.bigdet_spin)
+
+        bottom.addStretch()
+        save_btn = QtWidgets.QPushButton("Save Composite Frame…")
+        save_btn.setToolTip("Save the current composited frame as a TIFF")
+        save_btn.clicked.connect(self._on_save_composite)
+        bottom.addWidget(save_btn)
+        outer.addLayout(bottom)
+        return grp
+
     # ── Signal Wiring (reactive) ───────────────────────────────────
 
     def _wire_signals(self):
@@ -759,6 +880,8 @@ class FFViewer(QtWidgets.QMainWindow):
         self.dark_check.toggled.connect(self._load_and_display)
         self.rings_check.toggled.connect(self._on_rings_toggled)
         self.axes_check.toggled.connect(self._on_axes_toggled)
+        self.multi_check.toggled.connect(self._on_multi_toggled)
+        self.composite_combo.currentTextChanged.connect(self._on_composite_op_changed)
         self.mask_check.toggled.connect(self._load_and_display)
         self.hflip_check.toggled.connect(self._load_and_display)
         self.vflip_check.toggled.connect(self._load_and_display)
@@ -805,6 +928,13 @@ class FFViewer(QtWidgets.QMainWindow):
             '  +X → into the page (beam direction, ⊗ at BC)\n'
             '  η = 0 at +Z, +90° at −Y, ±180° at −Z, −90° at +Y\n'
             '  View is "looking from source toward detector"\n'
+            '\n'
+            'Multi-Detector mode (toolbar Multi-Det checkbox):\n'
+            '  Loads up to 4 GE detector HDF5 files. Each detector reads its\n'
+            '  own ps.txt for BC, tx, ImTransOpt, dataLoc, BadPxIntensity,\n'
+            '  GapIntensity. Frames are inverse-warped into a common\n'
+            '  BigDetSize×BigDetSize composite (rotated by per-detector tx\n'
+            '  about the composite center) and combined by max or sum.\n'
             '\n'
             'Histogram (right side of image):\n'
             '  Drag top/bottom bars — Adjust thresholds\n'
@@ -1315,6 +1445,193 @@ class FFViewer(QtWidgets.QMainWindow):
         else:
             self.image_view.clear_overlays('axes')
 
+    # ── Multi-detector callbacks ───────────────────────────────────
+
+    def _on_multi_toggled(self, checked):
+        """Switch between single-detector and multi-detector data sources."""
+        if checked and not self.multi_mode:
+            # Save single-mode state so we can restore on toggle-off.
+            self._single_mode_state = dict(
+                bcy=self.bcy_edit.text(),
+                bcz=self.bcz_edit.text(),
+                ny=self.ny_edit.text(),
+                nz=self.nz_edit.text(),
+                tx=self.tx_edit.text(),
+            )
+        elif not checked and self.multi_mode:
+            saved = getattr(self, '_single_mode_state', None)
+            if saved:
+                self.bcy_edit.setText(saved['bcy'])
+                self.bcz_edit.setText(saved['bcz'])
+                self.ny_edit.setText(saved['ny'])
+                self.nz_edit.setText(saved['nz'])
+                self.tx_edit.setText(saved['tx'])
+
+        self.multi_mode = checked
+        self._file_stack.setCurrentIndex(1 if checked else 0)
+        self.composite_combo.setEnabled(checked)
+        if checked:
+            # Composite center = (BigDetSize/2, BigDetSize/2). Push that into
+            # the BC fields so rings, lab axes, cursor R/η work in the lab
+            # frame. Tx is identity (composite is already in lab frame).
+            self.tx_edit.setText("0")
+            self._update_bc_for_multi()
+        # Either direction: trigger a fresh display.
+        self._load_and_display()
+
+    def _on_composite_op_changed(self, text):
+        self.composite_op = text
+        if self.multi_mode:
+            self._load_and_display()
+
+    def _on_bigdet_changed(self, value):
+        self.big_det_size = int(value)
+        self._big_det_auto = False
+        # Geometry changed → invalidate every detector's cached coord map.
+        for s in self._det_states:
+            s._inv_coords = None
+            s._inv_cache_key = ()
+        self._update_bc_for_multi()
+        if self.multi_mode:
+            self._load_and_display()
+
+    def _update_bc_for_multi(self):
+        """When in multi-mode, BC of the displayed composite is its center."""
+        half = self.big_det_size / 2.0
+        self.bcy_edit.setText(str(half))
+        self.bcz_edit.setText(str(half))
+        self.ny_edit.setText(str(self.big_det_size))
+        self.nz_edit.setText(str(self.big_det_size))
+        self.ny = self.nz = self.big_det_size
+        self.bc_local = [half, half]
+        self.lsd_orig = self.lsd_local
+
+    def _on_det_enabled(self, idx, checked):
+        self._det_states[idx].enabled = bool(checked)
+        if self.multi_mode:
+            self._load_and_display()
+
+    def _on_pick_det_data(self, idx):
+        fn, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, f"Select GE{idx+1} data HDF5",
+            os.path.dirname(self._det_states[idx].data_file) or os.getcwd(),
+            "HDF5 (*.h5 *.hdf5 *.hdf *.nxs);;All (*)")
+        if not fn:
+            return
+        self._det_states[idx].data_file = fn
+        self._det_states[idx]._dark_image = None
+        self._refresh_det_widget(idx)
+        if self.multi_mode:
+            self._load_and_display()
+
+    def _on_pick_det_dark(self, idx):
+        fn, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, f"Select GE{idx+1} dark HDF5",
+            os.path.dirname(self._det_states[idx].dark_file
+                             or self._det_states[idx].data_file) or os.getcwd(),
+            "HDF5 (*.h5 *.hdf5 *.hdf *.nxs);;All (*)")
+        if not fn:
+            return
+        self._det_states[idx].dark_file = fn
+        self._det_states[idx]._dark_image = None
+        self._refresh_det_widget(idx)
+        if self.multi_mode:
+            self._load_and_display()
+
+    def _on_clear_det_dark(self, idx):
+        self._det_states[idx].dark_file = ''
+        self._det_states[idx]._dark_image = None
+        self._refresh_det_widget(idx)
+        if self.multi_mode:
+            self._load_and_display()
+
+    def _on_pick_det_param(self, idx):
+        fn, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, f"Select GE{idx+1} parameter file",
+            os.path.dirname(self._det_states[idx].param_file) or os.getcwd(),
+            "Param Files (*.txt);;All (*)")
+        if not fn:
+            return
+        try:
+            params = self._det_states[idx].load_param_file(fn)
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(
+                self, "Param read failed", f"GE{idx+1}: {e}")
+            return
+        # First detector loaded → import shared crystallography params.
+        self._absorb_shared_params(params)
+        # Auto-pick BigDetSize on first param file load.
+        if self._big_det_auto:
+            new_size = _md.autopick_big_det_size(self._det_states)
+            if new_size != self.big_det_size:
+                self.big_det_size = new_size
+                # block the spin's signal so we don't re-trigger _on_bigdet_changed
+                self.bigdet_spin.blockSignals(True)
+                self.bigdet_spin.setValue(new_size)
+                self.bigdet_spin.blockSignals(False)
+        self._update_bc_for_multi()
+        self._refresh_det_widget(idx)
+        if self.multi_mode:
+            self._load_and_display()
+
+    def _absorb_shared_params(self, params):
+        """Pull crystallography + pixel params from a per-detector file
+        into the global GUI state (used for ring computation)."""
+        if params.get('px') is not None:
+            self.pixel_size = params['px']
+            self.px_edit.setText(str(params['px']))
+        if params.get('lsd') is not None:
+            self.lsd_local = params['lsd']
+            self.lsd_orig  = params['lsd']
+            self.lsd_edit.setText(str(params['lsd']))
+        if params.get('wavelength') is not None:
+            self.wl = params['wavelength']
+        if params.get('space_group') is not None:
+            self.sg = params['space_group']
+        if params.get('lattice_constant') is not None:
+            self.lattice_const = params['lattice_constant']
+        if params.get('max_ring_rad') is not None:
+            self.temp_max_ring_rad = params['max_ring_rad']
+
+    def _refresh_det_widget(self, idx):
+        s = self._det_states[idx]
+        w = self._det_widgets[idx]
+        w['data_lbl'].setText(os.path.basename(s.data_file) if s.data_file else "(none)")
+        w['dark_lbl'].setText(os.path.basename(s.dark_file) if s.dark_file else "(same)")
+        w['param_lbl'].setText(os.path.basename(s.param_file) if s.param_file else "(none)")
+        bits = []
+        if s.param_file:
+            bits.append(f"BC=({s.bc_y:.1f},{s.bc_z:.1f}) tx={s.tx:g}°")
+            if s.im_trans_opts:
+                bits.append(f"ImTransOpt={s.im_trans_opts}")
+        if s.data_file:
+            nf = s.n_frames()
+            if nf:
+                bits.append(f"{nf} frames @ {s.data_loc}")
+        w['status_lbl'].setText("  ".join(bits))
+
+    def _on_save_composite(self):
+        """Save the most recent composite array as a TIFF."""
+        if self.bdata is None:
+            QtWidgets.QMessageBox.information(
+                self, "Nothing to save", "Load detectors and a frame first.")
+            return
+        fn, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save composite frame",
+            f"composite_frame{self.frame_nr}.tif",
+            "TIFF (*.tif *.tiff)")
+        if not fn:
+            return
+        if not fn.lower().endswith(('.tif', '.tiff')):
+            fn += '.tif'
+        try:
+            if tifffile is None:
+                raise ImportError("tifffile not installed")
+            tifffile.imwrite(fn, self.bdata.astype(np.float32))
+            print(f"Composite saved: {fn}")
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "Save failed", str(e))
+
     def _on_first_file(self):
         fn, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select First File")
         if not fn:
@@ -1518,9 +1835,81 @@ class FFViewer(QtWidgets.QMainWindow):
         return affine_transform(data, M, offset=offset, order=1,
                                 mode='constant', cval=0.0)
 
+    def _load_and_display_multi(self):
+        """Composite the 4 detector frames into one BigDet array and display."""
+        states = self._det_states
+        loaded = [s for s in states if s.enabled and s.data_file and s.param_file]
+        if not loaded:
+            self.frame_label.setText("Multi-Det: no detectors loaded")
+            return
+
+        # Use the smallest n_frames across loaded detectors as the upper bound;
+        # don't crash if the user is mid-load with mismatched datasets.
+        nf_per = [s.n_frames() for s in loaded]
+        nf = min(n for n in nf_per if n > 0) if any(n > 0 for n in nf_per) else 0
+        if nf > 0 and self.frame_spin.maximum() != nf - 1:
+            self.frame_spin.setMaximum(max(nf - 1, 0))
+
+        frame_idx = self.frame_nr
+        bds = int(self.big_det_size)
+        px = float(self.pixel_size)
+        op = self.composite_op
+
+        self.frame_label.setText(
+            f"Frame {frame_idx}  |  multi-det compositing ({len(loaded)})…")
+
+        def _worker():
+            import time as _time
+            t0 = _time.monotonic()
+            data = _md.composite_frame(states, frame_idx, bds, px,
+                                        op=op, subtract_dark=True,
+                                        parallel=True)
+            return data, _time.monotonic() - t0
+
+        worker = AsyncWorker(target=_worker)
+
+        def _done(result):
+            data, elapsed = result
+            data = self._apply_tx_rotation(data)   # respects single Tx field
+            self.bdata = data
+            if getattr(self, '_levels_initialized', False):
+                try:
+                    lo = float(self.min_intensity_edit.text())
+                    hi = float(self.max_intensity_edit.text())
+                    self.image_view.set_image_data(data, auto_levels=False,
+                                                    levels=(lo, hi))
+                except ValueError:
+                    self.image_view.set_image_data(data)
+            else:
+                self.image_view.set_image_data(data)
+            self.frame_label.setText(
+                f"Frame {frame_idx}  |  composite (op={op}, "
+                f"{len(loaded)} det, {bds}², {1000*elapsed:.0f} ms)")
+            self.setWindowTitle(
+                f"FF Viewer — Multi-Det composite [frame {frame_idx}]")
+            if self.show_rings and self.ring_rads:
+                self._draw_rings()
+            if self.show_axes:
+                self._draw_axes()
+
+        def _err(msg):
+            self.frame_label.setText(f"Multi-Det error: {msg}")
+            print(f"Multi-Det error: {msg}")
+
+        worker.finished_signal.connect(_done)
+        worker.error_signal.connect(_err)
+        worker.start()
+        self._multi_worker = worker  # prevent GC
+
     def _load_and_display(self):
         """Load current frame and display."""
         self._sync_params()
+
+        # Multi-detector mode: composite the 4 detector frames into one image
+        # in a worker thread, then go through the standard display path.
+        if self.multi_mode:
+            self._load_and_display_multi()
+            return
 
         # Mask
         mask = None

@@ -240,6 +240,11 @@ def write_paramstest(p: ParamsTest, path: Union[str, Path]) -> None:
             f"MarginRadial {f6(p.MarginRadial if p.MarginRadial else p.MarginRad)};\n"
         )
         fp.write(f"MinMatchesToAcceptFrac {f6(p.MinMatchesToAcceptFrac)};\n")
+        # NoSaveAll is a user-set switch read by SaveBinData; the C FitSetup
+        # never emits it, so only write it when non-default to preserve
+        # byte-for-byte parity with the C output for the default case.
+        if p.NoSaveAll:
+            fp.write(f"NoSaveAll {int(p.NoSaveAll)};\n")
         # 2. File-name + path block (no trailing semicolons in C)
         fp.write(f"SpotsFileName {p.SpotsFileName}\n")
         fp.write(f"RefinementFileName {p.RefinementFileName}\n")
