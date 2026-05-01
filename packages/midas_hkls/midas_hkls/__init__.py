@@ -28,7 +28,7 @@ from .lattice import Lattice
 from .space_group import SpaceGroup, list_space_groups
 from .symops import SymOp
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "Atom",
