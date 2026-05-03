@@ -389,6 +389,7 @@ class FFViewer(QtWidgets.QMainWindow):
         self.bcs = None
         self.tx = [0]; self.ty = [0]; self.tz = [0]
         self.tx_local = 0.0
+        self._tx_shift = (0, 0)        # (r_min, c_min) of expanded rotated canvas
         self.n_detectors = 1
         self.start_det_nr = 1; self.end_det_nr = 1
         self.dark_cache = {}
@@ -792,6 +793,23 @@ class FFViewer(QtWidgets.QMainWindow):
         outer = QtWidgets.QVBoxLayout(grp)
         outer.setContentsMargins(4, 4, 4, 4)
         outer.setSpacing(2)
+
+        # Autoload row: one param file → fills all 4 slots by ge1..ge4 substitution.
+        autoload_row = QtWidgets.QHBoxLayout()
+        autoload_btn = QtWidgets.QPushButton("Autoload from one param file…")
+        autoload_btn.setToolTip(
+            "Pick any one detector's param file. The viewer derives the other\n"
+            "three by substituting ge1/ge2/ge3/ge4 in the path, parses each\n"
+            "found param file for Folder/FileStem/StartNr/Padding/Ext, and\n"
+            "populates the data + dark file for every detector that resolves\n"
+            "to an existing file. Slots whose files don't exist stay empty.")
+        autoload_btn.clicked.connect(self._on_autoload_multi)
+        autoload_row.addWidget(autoload_btn)
+        autoload_row.addStretch()
+        self._autoload_status = QtWidgets.QLabel("")
+        self._autoload_status.setStyleSheet("color: #888888;")
+        autoload_row.addWidget(self._autoload_status)
+        outer.addLayout(autoload_row)
 
         self._det_widgets = []
         for i in range(4):
@@ -1237,6 +1255,25 @@ class FFViewer(QtWidgets.QMainWindow):
             self.n_frames_per_file = nfs
             self.nframes_edit.setText(str(nfs))
 
+        # ── HDF5 dataset paths (dataLoc / darkLoc) ──
+        # APS GE files commonly store dark at /exchange/data_dark, not the
+        # default /exchange/dark — and the param file may explicitly point
+        # the dark to a different dataset (e.g. /exchange/data inside an
+        # external dark-only file). Strip a trailing '/' since h5py is
+        # forgiving but the comparison `dpath in f` relies on exact match.
+        dl = get_str('dataLoc')
+        if dl:
+            self.hdf5_data_path = dl.rstrip('/') or '/'
+            if hasattr(self, 'h5data_edit'):
+                self.h5data_edit.setText(self.hdf5_data_path)
+            applied.append(f"dataLoc={self.hdf5_data_path}")
+        dl = get_str('darkLoc')
+        if dl:
+            self.hdf5_dark_path = dl.rstrip('/') or '/'
+            if hasattr(self, 'h5dark_edit'):
+                self.h5dark_edit.setText(self.hdf5_dark_path)
+            applied.append(f"darkLoc={self.hdf5_dark_path}")
+
         # ── Dark file ──
         ds = get_str('DarkStem', 'Dark')
         if ds:
@@ -1574,6 +1611,150 @@ class FFViewer(QtWidgets.QMainWindow):
         if self.multi_mode:
             self._load_and_display()
 
+    # ── Autoload: one param file → all 4 detector slots ─────────────
+
+    _GE_LABELS = ("ge1", "ge2", "ge3", "ge4")
+
+    @staticmethod
+    def _derive_ge_path(path, src_label, tgt_label):
+        """Replace `src_label` (e.g. 'ge1') with `tgt_label` ('ge2'…) in every
+        component of `path`. Returns the derived path, or None when no
+        substitution actually happened."""
+        from pathlib import Path as _Path
+        p = _Path(path)
+        new_parts = [
+            re.sub(re.escape(src_label), tgt_label, part, flags=re.IGNORECASE)
+            for part in p.parts
+        ]
+        candidate = str(_Path(*new_parts))
+        return None if candidate == str(p) else candidate
+
+    def _on_autoload_multi(self):
+        """Pick one param file; auto-fill all 4 detector slots from it.
+
+        Substitutes ge1/ge2/ge3/ge4 in the param-file path to find siblings,
+        parses each one for Folder/FileStem/StartNr/Padding/Ext, builds the
+        expected data file path, and populates that slot if the file exists.
+        Slots whose param or data files don't exist stay empty.
+        """
+        seed_fn, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select any one detector's param file (autoload all 4)",
+            os.getcwd(), "Param Files (*.txt);;All (*)")
+        if not seed_fn:
+            return
+
+        # Identify which ge<N> tag is in the seed path.
+        src_label = None
+        for lbl in self._GE_LABELS:
+            if re.search(re.escape(lbl), seed_fn, flags=re.IGNORECASE):
+                src_label = lbl
+                break
+        if src_label is None:
+            QtWidgets.QMessageBox.warning(
+                self, "Autoload",
+                "The selected param file's path doesn't contain ge1/ge2/ge3/ge4.\n"
+                "Cannot auto-derive sibling detector files — use the per-slot\n"
+                "pickers in the cards below.")
+            return
+        src_idx = self._GE_LABELS.index(src_label)
+
+        found, missing = [], []
+        first_params = None
+        for tgt_idx, tgt_label in enumerate(self._GE_LABELS):
+            if tgt_idx == src_idx:
+                pf = seed_fn
+            else:
+                pf = self._derive_ge_path(seed_fn, src_label, tgt_label)
+
+            # Reset slot to a clean state before populating.
+            self._det_states[tgt_idx] = _md.DetectorState()
+            if not pf or not os.path.exists(pf):
+                missing.append((tgt_label, "param not found"))
+                self._refresh_det_widget(tgt_idx)
+                continue
+
+            s = self._det_states[tgt_idx]
+            try:
+                params = s.load_param_file(pf)
+            except Exception as e:
+                missing.append((tgt_label, f"param parse failed: {e}"))
+                self._refresh_det_widget(tgt_idx)
+                continue
+            if first_params is None:
+                first_params = params
+
+            # Build the data file path from the param file's contents.
+            raw = self._parse_param_file(pf)
+            def _get_str(k):
+                v = raw.get(k)
+                return v[0][0] if v and v[0] else None
+            def _get_int(k):
+                v = _get_str(k)
+                try: return int(float(v)) if v is not None else None
+                except (ValueError, TypeError): return None
+
+            folder = _get_str('Folder') or _get_str('RawFolder')
+            stem = _get_str('FileStem')
+            start_nr = _get_int('StartNr') or _get_int('StartFileNrFirstLayer')
+            padding = _get_int('Padding') or 6
+            ext = _get_str('Ext') or '.h5'
+            if not (folder and stem and start_nr is not None):
+                missing.append((tgt_label, "param missing Folder/FileStem/StartNr"))
+                self._refresh_det_widget(tgt_idx)
+                continue
+            if not ext.startswith('.'):
+                ext = '.' + ext
+            data_fn = os.path.join(folder, f"{stem}_{str(start_nr).zfill(padding)}{ext}")
+            if not os.path.exists(data_fn):
+                missing.append((tgt_label, f"data file not found: {os.path.basename(data_fn)}"))
+                self._refresh_det_widget(tgt_idx)
+                continue
+
+            s.data_file = data_fn
+            self._refresh_det_widget(tgt_idx)
+            found.append(tgt_label)
+
+        # Pull shared crystallography params from whichever param loaded first.
+        if first_params is not None:
+            self._absorb_shared_params(first_params)
+
+        # Auto-pick BigDetSize from the loaded detectors.
+        if self._big_det_auto:
+            new_size = _md.autopick_big_det_size(self._det_states)
+            if new_size != self.big_det_size:
+                self.big_det_size = new_size
+                self.bigdet_spin.blockSignals(True)
+                self.bigdet_spin.setValue(new_size)
+                self.bigdet_spin.blockSignals(False)
+        self._update_bc_for_multi()
+
+        # Status line + console summary.
+        status_bits = []
+        if found:
+            status_bits.append(f"loaded: {', '.join(found)}")
+        if missing:
+            status_bits.append(f"skipped: {', '.join(lbl for lbl, _ in missing)}")
+        self._autoload_status.setText("  ·  ".join(status_bits))
+        print(f"Autoload from {os.path.basename(seed_fn)}:")
+        for lbl in found:
+            print(f"  {lbl}: ✓")
+        for lbl, why in missing:
+            print(f"  {lbl}: skipped — {why}")
+
+        if not found:
+            QtWidgets.QMessageBox.warning(
+                self, "Autoload",
+                "No detector files were resolved. Check that the param-file\n"
+                "path contains a ge1/ge2/ge3/ge4 tag and that the per-detector\n"
+                "param files actually exist alongside the seed.")
+            return
+
+        # Auto-engage Multi-Det mode and trigger a composite.
+        if not self.multi_mode:
+            self.multi_check.setChecked(True)
+        else:
+            self._load_and_display()
+
     def _absorb_shared_params(self, params):
         """Pull crystallography + pixel params from a per-detector file
         into the global GUI state (used for ring computation)."""
@@ -1814,26 +1995,86 @@ class FFViewer(QtWidgets.QMainWindow):
         except ValueError:
             pass
 
-    def _apply_tx_rotation(self, data):
-        """Rotate `data` around (bcy, bcz) by -tx degrees to correct detector tilt
-        about the beam axis. Returns `data` unchanged when |tx| is ~0."""
-        if data is None or abs(self.tx_local) < 1e-9:
-            return data
+    @staticmethod
+    def _rotate_image(data, tx_deg, bc):
+        """Rotate `data` around `bc` by -tx_deg with an expanded output canvas.
+
+        Returns ``(rotated, (r_min, c_min))``. The output is sized to the tight
+        bounding box of the rotated input so no pixels are clipped, even when
+        BC sits outside the original detector area. The ``(r_min, c_min)``
+        shift tells callers where to position the image item in scene coords:
+        place the image at scene rect ``(c_min, r_min, new_W, new_H)`` and
+        all other overlays (rings, lab axes, cursor) remain in the original
+        scene coordinate system.
+
+        ``bc = [col, row]`` (MIDAS Y, Z convention).
+
+        No-op (returns ``data`` unchanged with shift=(0,0)) when |tx_deg| is
+        ~0 or when scipy is unavailable.
+        """
+        if data is None or abs(float(tx_deg)) < 1e-9:
+            return data, (0, 0)
         try:
             from scipy.ndimage import affine_transform
         except ImportError:
             print("scipy not installed — cannot apply Tx rotation")
-            return data
-        # Display: X = bcy = column index (nz axis), Y = bcz = row index (ny axis)
-        theta = -self.tx_local * deg2rad
+            return data, (0, 0)
+        H, W = data.shape[:2]
+        theta = -float(tx_deg) * deg2rad
         c, s = math.cos(theta), math.sin(theta)
-        bc_i = self.bc_local[1]  # row (Y)
-        bc_j = self.bc_local[0]  # col (X)
+        bc_i = float(bc[1])   # row (Z)
+        bc_j = float(bc[0])   # col (Y)
         M = np.array([[c, -s], [s, c]])
         center = np.array([bc_i, bc_j])
-        offset = center - M @ center
-        return affine_transform(data, M, offset=offset, order=1,
-                                mode='constant', cval=0.0)
+
+        # Forward-map the 4 input corners → tight rotated bounding box.
+        # Forward map (input → output) is M.T @ (input − center) + center.
+        corners = np.array([[0, 0], [0, W - 1],
+                            [H - 1, 0], [H - 1, W - 1]], dtype=float)
+        corners_out = (M.T @ (corners - center).T).T + center
+        r_min = int(math.floor(corners_out[:, 0].min()))
+        c_min = int(math.floor(corners_out[:, 1].min()))
+        r_max = int(math.ceil(corners_out[:, 0].max()))
+        c_max = int(math.ceil(corners_out[:, 1].max()))
+        new_H = r_max - r_min + 1
+        new_W = c_max - c_min + 1
+
+        # Shift the inverse-map offset so the bounding box aligns at output(0,0).
+        shift = np.array([r_min, c_min], dtype=float)
+        offset = center - M @ (center - shift)
+        rotated = affine_transform(data, M, offset=offset,
+                                    output_shape=(new_H, new_W),
+                                    order=1, mode='constant', cval=0.0)
+        return rotated, (r_min, c_min)
+
+    def _apply_tx_rotation(self, data):
+        """Rotate ``data`` using the viewer's Tx field and BC, and remember
+        the canvas shift so the display path can position the image item
+        at the correct scene rectangle (so rings/axes/cursor stay aligned)."""
+        rotated, self._tx_shift = self._rotate_image(
+            data, self.tx_local, self.bc_local)
+        return rotated
+
+    def _apply_tx_image_rect(self, data):
+        """Position the displayed image at the correct scene rectangle so
+        the expanded rotated canvas lines up with the original-coords
+        BC, rings overlay, lab-axes overlay, and cursor R/η.
+
+        For Tx=0 (no rotation) this resets the rect to (0, 0, W, H), the
+        default image-item position.
+        """
+        if data is None:
+            return
+        H, W = data.shape[:2]
+        r_min, c_min = self._tx_shift
+        # data here is already the rotated/expanded array; its shape is the
+        # bounding-box size (new_H, new_W). The scene rectangle is the
+        # bounding-box in original-scene coords: (c_min, r_min) to
+        # (c_min + W, r_min + H).
+        try:
+            self.image_view.set_image_rect(c_min, r_min, W, H)
+        except Exception as e:
+            print(f"set_image_rect failed: {e}")
 
     def _load_and_display_multi(self):
         """Composite the 4 detector frames into one BigDet array and display."""
@@ -1882,6 +2123,7 @@ class FFViewer(QtWidgets.QMainWindow):
                     self.image_view.set_image_data(data)
             else:
                 self.image_view.set_image_data(data)
+            self._apply_tx_image_rect(data)
             self.frame_label.setText(
                 f"Frame {frame_idx}  |  composite (op={op}, "
                 f"{len(loaded)} det, {bds}², {1000*elapsed:.0f} ms)")
@@ -2097,6 +2339,7 @@ class FFViewer(QtWidgets.QMainWindow):
                         self.image_view.set_image_data(data_out)
                 else:
                     self.image_view.set_image_data(data_out)
+                self._apply_tx_image_rect(data_out)
                 self.max_check.setEnabled(True)
                 self.sum_check.setEnabled(True)
                 fn_display = (os.path.basename(self.zarr_zip_path or '')
@@ -2152,6 +2395,7 @@ class FFViewer(QtWidgets.QMainWindow):
                 self.image_view.set_image_data(data)
         else:
             self.image_view.set_image_data(data)
+        self._apply_tx_image_rect(data)
         basename = os.path.basename(fn) if not self.zarr_store else os.path.basename(self.zarr_zip_path or '')
         self.frame_label.setText(f"Frame {self.frame_nr}  |  {basename}")
         self.setWindowTitle(f"FF Viewer — {basename} [frame {self.frame_nr}]")
