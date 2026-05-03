@@ -1613,11 +1613,9 @@ class FFViewer(QtWidgets.QMainWindow):
 
     # ── Autoload: one param file → all 4 detector slots ─────────────
 
-    _GE_LABELS = ("ge1", "ge2", "ge3", "ge4")
-
     @staticmethod
     def _derive_ge_path(path, src_label, tgt_label):
-        """Replace `src_label` (e.g. 'ge1') with `tgt_label` ('ge2'…) in every
+        """Replace `src_label` (e.g. 'ge1', 'det2') with `tgt_label` in every
         component of `path`. Returns the derived path, or None when no
         substitution actually happened."""
         from pathlib import Path as _Path
@@ -1629,13 +1627,63 @@ class FFViewer(QtWidgets.QMainWindow):
         candidate = str(_Path(*new_parts))
         return None if candidate == str(p) else candidate
 
+    @staticmethod
+    def _find_detector_tag(seed_path):
+        """Detect the detector-index tag in `seed_path`.
+
+        A tag is a substring like 'ge1', 'det1', 'panel1' — an alphabetic
+        prefix followed by a single digit 1-4 (not adjacent to other digits).
+        Identified by trying each candidate tag's substitutions with
+        digits 1/2/3/4 and picking the one with the most existing siblings.
+
+        Returns (prefix, source_digit) — e.g. ('ge', '1'), ('det', '2') —
+        or None if no robust tag with ≥2 sibling matches is found.
+        """
+        # Candidate prefixes: scan for `<alpha>+<1-4>` patterns where the
+        # digit isn't part of a longer numeric run. For each match, also try
+        # shorter prefixes (e.g. for 'panel1' also try 'el1', 'l1') so we
+        # don't get fooled by accidentally-long alphabetic runs.
+        candidates = set()
+        for m in re.finditer(r'([A-Za-z]+)([1-4])(?![0-9])', seed_path):
+            prefix = m.group(1)
+            digit = m.group(2)
+            # Take 1..min(len, 6) trailing chars as candidate prefixes.
+            for n in range(1, min(len(prefix), 6) + 1):
+                candidates.add((prefix[-n:], digit))
+
+        best = None
+        best_count = 0
+        for prefix, digit in candidates:
+            src_tag = prefix + digit
+            count = 0
+            for d in '1234':
+                tgt_tag = prefix + d
+                if d == digit:
+                    if os.path.exists(seed_path):
+                        count += 1
+                    continue
+                sib = FFViewer._derive_ge_path(seed_path, src_tag, tgt_tag)
+                if sib and os.path.exists(sib):
+                    count += 1
+            # Prefer higher sibling count; on tie prefer the longer prefix
+            # (more specific, less likely to be a false positive substring).
+            score = (count, len(prefix))
+            best_score = (best_count, len(best[0])) if best else (0, 0)
+            if score > best_score:
+                best_count = count
+                best = (prefix, digit)
+        return best if best_count >= 2 else None
+
     def _on_autoload_multi(self):
         """Pick one param file; auto-fill all 4 detector slots from it.
 
-        Substitutes ge1/ge2/ge3/ge4 in the param-file path to find siblings,
-        parses each one for Folder/FileStem/StartNr/Padding/Ext, builds the
-        expected data file path, and populates that slot if the file exists.
-        Slots whose param or data files don't exist stay empty.
+        Auto-detects the detector tag (e.g. ``ge1``, ``det1``, ``panel1``) by
+        finding which substring of the seed path, when its trailing digit
+        is substituted with 1-4, yields the most existing sibling files.
+        Then for each detector, parses its param file for
+        Folder/FileStem/StartNr/Padding/Ext, builds the expected data file
+        path, and populates that slot if the file exists. Slots whose param
+        or data files don't exist stay empty.
         """
         seed_fn, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Select any one detector's param file (autoload all 4)",
@@ -1643,24 +1691,24 @@ class FFViewer(QtWidgets.QMainWindow):
         if not seed_fn:
             return
 
-        # Identify which ge<N> tag is in the seed path.
-        src_label = None
-        for lbl in self._GE_LABELS:
-            if re.search(re.escape(lbl), seed_fn, flags=re.IGNORECASE):
-                src_label = lbl
-                break
-        if src_label is None:
+        tag = self._find_detector_tag(seed_fn)
+        if tag is None:
             QtWidgets.QMessageBox.warning(
                 self, "Autoload",
-                "The selected param file's path doesn't contain ge1/ge2/ge3/ge4.\n"
-                "Cannot auto-derive sibling detector files — use the per-slot\n"
-                "pickers in the cards below.")
+                "Could not detect a detector tag (e.g. ge1, det1, panel1) in\n"
+                "the selected param file's path that has ≥2 sibling files.\n\n"
+                "Use the per-slot pickers in the cards below instead, or\n"
+                "rename your files so the detector index is in the path.")
             return
-        src_idx = self._GE_LABELS.index(src_label)
+        prefix, src_digit = tag
+        src_idx = int(src_digit) - 1
+        ge_labels = tuple(prefix + str(i) for i in range(1, 5))
+        print(f"Autoload: detected detector tag '{prefix}<N>' (seed has '{prefix}{src_digit}')")
 
         found, missing = [], []
         first_params = None
-        for tgt_idx, tgt_label in enumerate(self._GE_LABELS):
+        src_label = ge_labels[src_idx]
+        for tgt_idx, tgt_label in enumerate(ge_labels):
             if tgt_idx == src_idx:
                 pf = seed_fn
             else:
