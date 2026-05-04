@@ -531,6 +531,9 @@ class FFViewer(QtWidgets.QMainWindow):
         view_menu.addAction(self.log_panel.toggleViewAction())
         view_menu.addAction(self._ivf_dock.toggleViewAction())
 
+        # Apply initial font so the viewer opens at a readable size.
+        self._on_font_changed(self.font_spin.value())
+
     def _build_toolbar(self):
         tb = QtWidgets.QHBoxLayout()
 
@@ -550,8 +553,8 @@ class FFViewer(QtWidgets.QMainWindow):
 
         tb.addWidget(QtWidgets.QLabel("Font:"))
         self.font_spin = QtWidgets.QSpinBox()
-        self.font_spin.setRange(8, 24)
-        self.font_spin.setValue(10)
+        self.font_spin.setRange(8, 36)
+        self.font_spin.setValue(14)
         self.font_spin.valueChanged.connect(self._on_font_changed)
         tb.addWidget(self.font_spin)
 
@@ -1324,7 +1327,18 @@ class FFViewer(QtWidgets.QMainWindow):
 
     def _on_font_changed(self, size):
         QtWidgets.QApplication.instance().setStyleSheet(f'* {{ font-size: {size}pt; }}')
-        # pyqtgraph TextItems don't pick up Qt stylesheet font changes — redraw.
+        # pyqtgraph axes ignore Qt stylesheets — update tick fonts explicitly.
+        font = QtGui.QFont('', int(size))
+        if hasattr(self, 'image_view'):
+            pg_iv = getattr(self.image_view, '_iv', None)
+            view = getattr(pg_iv, 'view', None) if pg_iv is not None else None
+            if view is not None and hasattr(view, 'getAxis'):
+                for ax_name in ('left', 'bottom', 'right', 'top'):
+                    try:
+                        view.getAxis(ax_name).setTickFont(font)
+                    except Exception:
+                        pass
+        # pyqtgraph TextItems also don't pick up the stylesheet — redraw axes.
         if self.show_axes:
             self._draw_axes()
 
