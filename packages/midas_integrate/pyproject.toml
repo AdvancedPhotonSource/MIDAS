@@ -63,6 +63,7 @@ Issues = "https://github.com/marinerhemant/MIDAS/issues"
 midas-detector-mapper = "midas_integrate.cli:detector_mapper_main"
 midas-integrate = "midas_integrate.cli:integrate_main"
 midas-integrate-server = "midas_integrate.cli:server_main"
+midas-integrate-export-csv = "midas_integrate.cli:export_csv_main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -136,6 +136,7 @@ class ProcessingParameters:
     param_file: Path
     input_file_pattern: str
     dark_file: Optional[Path] = None
+    bright_file: Optional[Path] = None
     data_loc: str = 'exchange/data'
     dark_loc: str = 'exchange/dark'
     frame_chunks: int = -1
@@ -147,6 +148,37 @@ class ProcessingParameters:
     progress_callback: Optional[Callable[[ProgressInfo], None]] = None
     log_level: int = logging.INFO
     nCPUsLocal: int = 4
+    short_names: bool = True
+    out_name: Optional[str] = None
+    csv_output: bool = False
+
+
+# Suffixes the pipeline stacks onto the input filename. Stripped from the
+# right (case-insensitive, repeated) by ``short_pipeline_stem`` so the final
+# zarr.zip lands at ``<input-stem>.zarr.zip`` instead of
+# ``<input>.h5.analysis.MIDAS.zip.caked.hdf.zarr.zip``. See issue #18.
+_KNOWN_PIPELINE_SUFFIXES = (
+    '.zarr', '.zip', '.midas', '.analysis',
+    '.caked', '.hdf5', '.hdf', '.h5', '.tiff', '.tif',
+)
+
+
+def short_pipeline_stem(path: Path) -> str:
+    """Strip stacked pipeline suffixes to recover the original input stem.
+
+    >>> short_pipeline_stem(Path('sample_000123.h5.analysis.MIDAS.zip.caked.hdf'))
+    'sample_000123'
+    """
+    name = path.name
+    while True:
+        lower = name.lower()
+        for sfx in _KNOWN_PIPELINE_SUFFIXES:
+            if lower.endswith(sfx):
+                name = name[: -len(sfx)]
+                break
+        else:
+            break
+    return name or path.stem
 
 
 class FileProcessor:
@@ -325,24 +357,43 @@ class FileProcessor:
             logger.error(error_msg)
             raise IntegrationError(error_msg)
     
+    def _output_zarr_path(self, hdf_file: Path) -> Path:
+        """Resolve the final ``.zarr.zip`` output path for a caked HDF file.
+
+        Priority: explicit ``out_name`` > short stem > legacy suffix-stack.
+        See issue #18 — the legacy form
+        ``foo.h5.analysis.MIDAS.zip.caked.hdf.zarr.zip`` is too long for
+        GSAS2 imports and unreadable in file managers.
+        """
+        if self.params.out_name:
+            stem = self.params.out_name
+            if stem.lower().endswith('.zarr.zip'):
+                stem = stem[: -len('.zarr.zip')]
+            elif stem.lower().endswith('.zip'):
+                stem = stem[: -len('.zip')]
+            return hdf_file.parent / f"{stem}.zarr.zip"
+        if self.params.short_names:
+            return hdf_file.parent / f"{short_pipeline_stem(hdf_file)}.zarr.zip"
+        return Path(f"{hdf_file}.zarr.zip")
+
     def convert_hdf_to_zarr(self, hdf_file: Path, input_zip_file: Path) -> Path:
         """
         Convert HDF5 file to Zarr ZIP format.
-        
+
         Args:
             hdf_file: Input HDF5 file
             input_zip_file: Original Input Zarr file from which metadata will be copied
-            
+
         Returns:
             Path to output Zarr ZIP file
-            
+
         Raises:
             IntegrationError: If conversion fails
         """
         if not hdf_file.exists():
             raise FileOperationError(f"HDF file does not exist: {hdf_file}")
-            
-        output_zip = Path(f"{hdf_file}.zarr.zip")
+
+        output_zip = self._output_zarr_path(hdf_file)
         
         # Backup existing file if it exists
         if output_zip.exists():
@@ -431,6 +482,116 @@ class FileProcessor:
             except Exception as e:
                 logger.warning(f"Failed to copy '{full_path}': {e}")
 
+    def _bright_lineout(self) -> Optional[dict]:
+        """Compute the bright/flat-field 1D + 2D integration once per run.
+
+        Cached on the instance so it's reused across all output zarrs (the
+        bright doesn't change frame-to-frame). Issue #20.
+        """
+        bright_path = self.params.bright_file
+        if bright_path is None:
+            return None
+        cached = getattr(self, '_bright_cache', None)
+        if cached is not None:
+            return cached
+        if not bright_path.exists():
+            logger.warning(f"Bright file does not exist, skipping: {bright_path}")
+            self._bright_cache = None
+            return None
+        try:
+            import h5py
+            import numpy as np
+            import torch
+            from midas_integrate import (
+                build_csr, integrate, load_map, parse_params, profile_1d,
+            )
+            from midas_integrate.image import load_image
+            from midas_integrate.kernels import r_axis, eta_axis
+        except ImportError as e:
+            logger.warning(f"Bright lineout skipped: midas_integrate not importable ({e}). "
+                           "Install with: pip install midas-integrate")
+            self._bright_cache = None
+            return None
+
+        map_file = self.params.result_dir / 'Map.bin'
+        nmap_file = self.params.result_dir / 'nMap.bin'
+        if not (map_file.exists() and nmap_file.exists()):
+            logger.warning("Bright lineout skipped: Map.bin/nMap.bin not in result_dir")
+            self._bright_cache = None
+            return None
+
+        try:
+            params = parse_params(self.params.param_file)
+            params.validate()
+            pixmap = load_map(map_file, nmap_file)
+            geom = build_csr(
+                pixmap, n_r=params.n_r_bins, n_eta=params.n_eta_bins,
+                n_pixels_y=params.NrPixelsY, n_pixels_z=params.NrPixelsZ,
+                bc_y=params.BC_y, bc_z=params.BC_z,
+                device='cpu', dtype=torch.float64,
+            )
+
+            sfx = bright_path.suffix.lower()
+            if sfx in ('.h5', '.hdf5', '.nx', '.nxs'):
+                with h5py.File(bright_path, 'r') as f:
+                    dset = f[self.params.data_loc]
+                    arr = dset[...].astype(np.float64)
+                if arr.ndim == 3:
+                    img = arr.mean(axis=0)
+                elif arr.ndim == 2:
+                    img = arr
+                else:
+                    raise ValueError(f"Bright HDF5 shape {arr.shape} unsupported")
+            else:
+                img = load_image(bright_path,
+                                 n_pixels_y=params.NrPixelsY,
+                                 n_pixels_z=params.NrPixelsZ).astype(np.float64)
+
+            img_t = torch.from_numpy(img)
+            int2d = integrate(img_t, geom, mode='bilinear',
+                              normalize=bool(params.Normalize))
+            prof = profile_1d(int2d, geom, mode='area_weighted')
+
+            r_vals = r_axis(n_r=params.n_r_bins,
+                            RMin=params.RMin, RBinSize=params.RBinSize)
+            eta_vals = eta_axis(n_eta=params.n_eta_bins,
+                                EtaMin=params.EtaMin, EtaBinSize=params.EtaBinSize)
+
+            self._bright_cache = {
+                'r_vals': np.asarray(r_vals, dtype=np.float64),
+                'eta_vals': np.asarray(eta_vals, dtype=np.float64),
+                'lineout': prof.detach().cpu().numpy().astype(np.float64),
+                'cake': int2d.detach().cpu().numpy().astype(np.float64),
+                'source_file': str(bright_path.resolve()),
+            }
+            logger.info(f"Bright lineout computed from {bright_path.name} "
+                        f"(nR={params.n_r_bins}, nEta={params.n_eta_bins})")
+            return self._bright_cache
+        except Exception as e:
+            logger.warning(f"Bright lineout computation failed for {bright_path}: {e}")
+            self._bright_cache = None
+            return None
+
+    def _write_bright_to_zarr(self, output_zip_file: Path) -> None:
+        """Embed the cached bright integration under ``processed/bright/``."""
+        bright = self._bright_lineout()
+        if bright is None:
+            return
+        try:
+            with zarr.open(str(output_zip_file), mode='a') as z_out:
+                grp = z_out.require_group('processed/bright')
+                for key in ('r_vals', 'eta_vals', 'lineout', 'cake'):
+                    if key in grp:
+                        del grp[key]
+                    grp.create_dataset(key, data=bright[key])
+                grp.attrs['source_file'] = bright['source_file']
+                grp.attrs['units'] = 'R: pixels, eta: degrees, intensity: arbitrary'
+                grp.attrs['lineout_axis'] = 'R'
+                grp.attrs['cake_axes'] = 'R, eta'
+            logger.info(f"Embedded bright lineout into {output_zip_file}")
+        except Exception as e:
+            logger.warning(f"Failed to embed bright lineout into {output_zip_file}: {e}")
+
     def _enrich_zarr_with_metadata(self, input_zip_file: Path, output_zip_file: Path) -> None:
         """
         Copy metadata from the input Zarr to the output Zarr:
@@ -483,10 +644,39 @@ class FileProcessor:
                         logger.info("Copied instrument metadata to output Zarr.")
                     else:
                         logger.info("No instrument group found in input Zarr.")
-                        
+
         except Exception as e:
             logger.error(f"Error enriching Zarr with metadata: {e}")
+
+        # Bright/flat-field lineout (issue #20). Independent of the above
+        # try/except so a metadata copy failure doesn't suppress the bright
+        # write, and vice-versa.
+        self._write_bright_to_zarr(output_zip_file)
     
+    def export_csv_sidecar(self, zarr_file_path: Path) -> Optional[Path]:
+        """Dump per-frame lineouts + REtaMap as CSVs next to the zarr (issue #23).
+
+        Writes into ``<zarr_dir>/<stem>_csv/`` so multiple runs can coexist
+        without name collisions.
+        """
+        if not zarr_file_path.exists():
+            logger.warning(f"CSV export skipped: zarr does not exist: {zarr_file_path}")
+            return None
+        try:
+            from midas_integrate.exporters import export as zarr_to_csv
+        except ImportError:
+            logger.warning("CSV export skipped: midas_integrate package not installed. "
+                           "Install with: pip install midas-integrate")
+            return None
+        out_dir = zarr_file_path.parent / f"{short_pipeline_stem(zarr_file_path)}_csv"
+        try:
+            written = zarr_to_csv(zarr_file_path, out_dir)
+            logger.info(f"CSV sidecar: wrote {len(written)} files to {out_dir}")
+            return out_dir
+        except Exception as e:
+            logger.warning(f"CSV export failed for {zarr_file_path}: {e}")
+            return None
+
     def save_as_matlab(self, zarr_file_path: Path) -> Optional[Path]:
         """
         Save Zarr file as MATLAB .mat file
@@ -667,10 +857,14 @@ class FileProcessor:
             
             # Convert HDF to Zarr
             out_zip = self.convert_hdf_to_zarr(hdf_file, zip_file)
-            
+
             # Save as MATLAB file if requested
             if self.params.write_mat:
                 self.save_as_matlab(out_zip)
+
+            # Optional CSV sidecar export (issue #23)
+            if self.params.csv_output:
+                self.export_csv_sidecar(out_zip)
             
             # Report success
             self._report_progress(ProgressInfo(
@@ -885,6 +1079,25 @@ class MidasIntegrator:
                           help='Enable peak fitting in the integrator.')
         parser.add_argument('-peakParamsFN', type=str, default='',
                           help='Peak parameters file with DoPeakFit/PeakLocation/FitROIPadding entries.')
+        parser.add_argument('-shortNames', type=int, default=1,
+                          help='Strip stacked pipeline suffixes from output names so the '
+                               'final file lands at <input-stem>.zarr.zip instead of '
+                               '<input>.h5.analysis.MIDAS.zip.caked.hdf.zarr.zip. '
+                               '0 = legacy suffix-stacking. (issue #18)')
+        parser.add_argument('-outName', type=str, default='',
+                          help='Override the output zarr.zip stem entirely '
+                               '(e.g. -outName sample_001 -> sample_001.zarr.zip). '
+                               'Only applies when a single file is processed; '
+                               'leave empty to auto-derive from the input filename.')
+        parser.add_argument('-brightFN', type=str, default='',
+                          help='Optional bright/flat-field image. Its 1D and 2D '
+                               'integrated profiles are embedded in every output '
+                               'zarr at processed/bright/ for downstream '
+                               'normalization. (issue #20)')
+        parser.add_argument('-csvOutput', type=int, default=0,
+                          help='Also export per-frame lineouts and the REtaMap as '
+                               'CSVs alongside each zarr.zip. Uses '
+                               'midas-integrate-export-csv. (issue #23)')
         
         # Parse known args and capture the rest
         args, unknown = parser.parse_known_args()
@@ -939,6 +1152,7 @@ class MidasIntegrator:
             param_file=param_file,
             input_file_pattern=self.args.dataFN,
             dark_file=Path(self.args.darkFN) if self.args.darkFN else None,
+            bright_file=Path(self.args.brightFN) if self.args.brightFN else None,
             data_loc=self.args.dataLoc,
             dark_loc=self.args.darkLoc,
             frame_chunks=self.args.numFrameChunks,
@@ -949,6 +1163,9 @@ class MidasIntegrator:
             progress_callback=self._on_progress_update,
             log_level=log_level,
             nCPUsLocal=self.args.nCPUsLocal,
+            short_names=bool(self.args.shortNames),
+            out_name=self.args.outName or None,
+            csv_output=bool(self.args.csvOutput),
         )
     
     def _on_progress_update(self, progress_info: ProgressInfo) -> None:
@@ -1002,8 +1219,13 @@ class MidasIntegrator:
         # Pattern to match 6-digit file numbers in filenames
         file_nr_pattern = re.compile(r'(\d{6})')
         
-        # Look for all .caked.hdf.zarr.zip files in the result directory
-        zarr_files = list(self.params.result_dir.glob("*.caked.hdf.zarr.zip"))
+        # Look for both legacy (``*.caked.hdf.zarr.zip``) and short-name
+        # (``*.zarr.zip``) outputs so resuming works across the issue-#18
+        # rename. ``set()`` dedups when both forms coexist for the same file.
+        zarr_files = list({
+            *self.params.result_dir.glob("*.caked.hdf.zarr.zip"),
+            *self.params.result_dir.glob("*.zarr.zip"),
+        })
         
         # Get the base names of the files we're processing
         start_file_nr_str = str(start_file_nr).zfill(6)
@@ -1073,6 +1295,15 @@ class MidasIntegrator:
             # Calculate number of files to process
             nr_files = end_file_nr - start_file_nr + 1
             logger.info(f"Processing {nr_files} files from {start_file_nr} to {end_file_nr}")
+
+            # ``-outName`` writes a single fixed filename; it would clobber when
+            # processing more than one file. Reject up-front.
+            if self.params.out_name and nr_files > 1:
+                raise ConfigurationError(
+                    f"-outName cannot be used with multi-file runs "
+                    f"(got {nr_files} files: {start_file_nr}..{end_file_nr}). "
+                    "Either process one file at a time or rely on -shortNames."
+                )
             
             # Check for already processed files if skip_existing is enabled
             if self.params.skip_existing:

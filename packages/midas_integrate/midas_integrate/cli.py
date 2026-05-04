@@ -1,13 +1,15 @@
 """Command-line entry points for midas-integrate.
 
-Three console scripts (registered by pyproject.toml):
+Four console scripts (registered by pyproject.toml):
 
-  midas-detector-mapper PARAMS [--out DIR] [-j N]
-  midas-integrate       PARAMS --image FILE [--device cuda] [--mode floor|bilinear|gradient] ...
-  midas-integrate-server PARAMS [--device cuda] [--port 60439] [--out DIR] ...
+  midas-detector-mapper      PARAMS [--out DIR] [-j N]
+  midas-integrate            PARAMS --image FILE [--device cuda] [--mode floor|bilinear|gradient] ...
+  midas-integrate-server     PARAMS [--device cuda] [--port 60439] [--out DIR] ...
+  midas-integrate-export-csv ZARR --out DIR [--frames 0-99] [--include-cake]
 
 These mirror the C/CUDA binaries (DetectorMapper, IntegratorZarrOMP,
-IntegratorFitPeaksGPUStream).
+IntegratorFitPeaksGPUStream); ``export-csv`` is the Python-side answer to
+issue #23 (clean CSV dump of integrated zarr output).
 """
 from __future__ import annotations
 
@@ -250,6 +252,54 @@ def server_main(argv=None) -> int:
         time.sleep(0.5)
     print("shutting down...")
     server.stop()
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# midas-integrate-export-csv
+# ─────────────────────────────────────────────────────────────────────────────
+def export_csv_main(argv=None) -> int:
+    p = argparse.ArgumentParser(
+        prog="midas-integrate-export-csv",
+        description="Export per-frame lineouts and the REtaMap from an "
+                    "integrated zarr (.zarr.zip) as plain CSVs.",
+    )
+    p.add_argument("zarr", type=Path,
+                   help="Path to integrated zarr.zip (output of "
+                        "IntegratorZarrOMP or midas-integrate)")
+    p.add_argument("--out", type=Path, required=True,
+                   help="Output directory (created if needed)")
+    p.add_argument("--frames", type=str, default="all",
+                   help="Frame selector: 'all', '0-99', '0,5,10', etc.")
+    p.add_argument("--include-cake", action="store_true",
+                   help="Also dump the full 2D cake for each selected frame")
+    p.add_argument("--no-summed", action="store_true",
+                   help="Skip the all-frame sum lineout")
+    p.add_argument("--no-metadata", action="store_true",
+                   help="Skip the metadata sidecar")
+    p.add_argument("--no-retamap", action="store_true",
+                   help="Skip the REtaMap (R/2θ/η/area/Q) sidecar")
+    p.add_argument("-V", "--version", action="version",
+                   version=f"midas-integrate {__version__}")
+    args = p.parse_args(argv)
+
+    if not args.zarr.exists():
+        p.error(f"input does not exist: {args.zarr}")
+
+    from midas_integrate.exporters import export
+    written = export(
+        args.zarr, args.out,
+        frames=args.frames,
+        include_cake=args.include_cake,
+        include_summed=not args.no_summed,
+        include_metadata=not args.no_metadata,
+        include_retamap=not args.no_retamap,
+    )
+    for p_out in written:
+        print(f"wrote: {p_out}")
+    if not written:
+        print("nothing written — input zarr had no recognised datasets")
+        return 1
     return 0
 
 

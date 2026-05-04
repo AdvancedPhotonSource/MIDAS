@@ -64,6 +64,7 @@ from midas_integrate.peakfit import (
 )
 from midas_integrate.fused_csr import build_fused_geometry
 from midas_integrate.postprocess import gauss_smooth_eta, median_filter_eta
+from midas_integrate.exporters import export as zarr_to_csv
 
 __all__ = [
     "__version__",
@@ -125,4 +126,6 @@ __all__ = [
     "build_fused_geometry",
     "gauss_smooth_eta",
     "median_filter_eta",
+    # exporters
+    "zarr_to_csv",
 ]
