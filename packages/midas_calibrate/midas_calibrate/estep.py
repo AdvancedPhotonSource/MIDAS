@@ -20,7 +20,11 @@ import numpy as np
 import torch
 
 from midas_integrate.detector_mapper import build_map
-from midas_integrate.geometry import build_tilt_matrix, invert_REta_to_pixel
+from midas_integrate.geometry import (
+    build_tilt_matrix,
+    invert_REta_to_pixel,
+    invert_REta_to_pixel_batch,
+)
 from midas_integrate.kernels import build_csr, integrate
 from midas_integrate.params import IntegrationParams
 
@@ -119,43 +123,72 @@ def extract_fitted_points(
     cake: CakeProfile, rt: RingTable, params: CalibrationParams,
     *, snr_min: float = 1.0,
 ) -> List[FittedPoint]:
-    """Per (ring × η-bin): centroid in the radial window → (R_fit, η) → (Y_pix, Z_pix)."""
+    """Per (ring × η-bin): centroid in the radial window → (R_fit, η) → (Y_pix, Z_pix).
+
+    Vectorised: the η-axis centroid + SNR filter run as numpy array ops
+    per ring, and the Newton inversion runs as a single batched call
+    over all surviving (ring, η) pairs. This replaces ~1000 scalar calls
+    into the inverter (3-5 rings × 360 η-bins) with one array call.
+    """
     px = 0.5 * (params.pxY + params.pxZ) if params.pxZ > 0 else params.pxY
     half_px = 0.5 * params.Width / px
     TRs = build_tilt_matrix(params.tx, params.ty, params.tz)
+    eta_centers = np.asarray(cake.eta_centers, dtype=np.float64)
 
-    fits: List[FittedPoint] = []
+    R_chunks: List[np.ndarray] = []
+    Eta_chunks: List[np.ndarray] = []
+    ring_idx_chunks: List[np.ndarray] = []
+    snr_chunks: List[np.ndarray] = []
+
     for ring_i, r_ideal in enumerate(rt.r_ideal_px):
         idx = np.where(np.abs(cake.R_centers - r_ideal) <= half_px)[0]
         if idx.size < 3:
             continue
-        R_window = cake.R_centers[idx]
-        for eta_j, eta in enumerate(cake.eta_centers):
-            I = cake.intensity[idx, eta_j]
-            I = np.maximum(I - I.min(), 0.0)
-            tot = I.sum()
-            if tot <= 0.0:
-                continue
-            R_fit = float((I * R_window).sum() / tot)
-            peak = float(I.max())
-            mean = float(I.mean()) + 1e-12
-            snr = peak / mean
-            if snr < snr_min:
-                continue
-            try:
-                Y_pix, Z_pix = invert_REta_to_pixel(
-                    R_fit, eta,
-                    Ycen=params.BC_y, Zcen=params.BC_z, TRs=TRs,
-                    Lsd=params.Lsd, RhoD=(params.RhoD if params.RhoD > 0 else params.MaxRingRad),
-                    px=px, parallax=params.Parallax,
-                )
-            except Exception:
-                continue
-            fits.append(FittedPoint(
-                Y_pix=float(Y_pix), Z_pix=float(Z_pix),
-                ring_idx=ring_i, snr=snr,
-            ))
-    return fits
+        R_window = cake.R_centers[idx].astype(np.float64)        # (n_R,)
+        I_block = cake.intensity[idx, :].astype(np.float64)      # (n_R, n_eta)
+        # Per-η baseline subtract across the radial window (matches the
+        # ``I - I.min()`` per-η-bin step of the previous scalar loop).
+        I = np.maximum(I_block - I_block.min(axis=0, keepdims=True), 0.0)
+        tot = I.sum(axis=0)                                      # (n_eta,)
+        valid_tot = tot > 0.0
+        if not valid_tot.any():
+            continue
+        # Centroid R_fit per η; safe-divide on bins with zero total.
+        safe_tot = np.where(valid_tot, tot, 1.0)
+        R_fit = (I * R_window[:, None]).sum(axis=0) / safe_tot
+        peak = I.max(axis=0)
+        mean = I.mean(axis=0) + 1e-12
+        snr = peak / mean
+        keep = valid_tot & (snr >= snr_min)
+        if not keep.any():
+            continue
+        R_chunks.append(R_fit[keep])
+        Eta_chunks.append(eta_centers[keep])
+        ring_idx_chunks.append(np.full(int(keep.sum()), ring_i, dtype=np.int64))
+        snr_chunks.append(snr[keep])
+
+    if not R_chunks:
+        return []
+
+    R_targets = np.concatenate(R_chunks)
+    Eta_targets = np.concatenate(Eta_chunks)
+    ring_idxs = np.concatenate(ring_idx_chunks)
+    snrs = np.concatenate(snr_chunks)
+
+    Y_pix, Z_pix = invert_REta_to_pixel_batch(
+        R_targets, Eta_targets,
+        Ycen=params.BC_y, Zcen=params.BC_z, TRs=TRs,
+        Lsd=params.Lsd, RhoD=(params.RhoD if params.RhoD > 0 else params.MaxRingRad),
+        px=px, parallax=params.Parallax,
+    )
+
+    return [
+        FittedPoint(
+            Y_pix=float(Y_pix[i]), Z_pix=float(Z_pix[i]),
+            ring_idx=int(ring_idxs[i]), snr=float(snrs[i]),
+        )
+        for i in range(R_targets.shape[0])
+    ]
 
 
 def run_estep(

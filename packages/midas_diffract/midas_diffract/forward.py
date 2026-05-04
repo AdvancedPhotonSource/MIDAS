@@ -52,9 +52,9 @@ class HEDMGeometry:
     at **every** distance (the AllDistsFound logic in the C code).
     """
     Lsd: "float | list[float]"     # Sample-detector distance(s) (um)
-    y_BC: "float | list[float]"    # Beam center y (pixels), per distance
-    z_BC: "float | list[float]"    # Beam center z (pixels), per distance
-    px: float                      # Pixel size (um) -- shared across distances
+    y_BC: "float | list[float]"    # Beam center y (pixels), per distance/detector
+    z_BC: "float | list[float]"    # Beam center z (pixels), per distance/detector
+    px: float                      # Pixel size (um) -- shared
     omega_start: float             # Omega start (degrees)
     omega_step: float              # Omega step (degrees, may be negative)
     n_frames: int                  # Frames per distance (NrFilesPerDistance)
@@ -62,26 +62,58 @@ class HEDMGeometry:
     n_pixels_z: int                # Detector pixels in z
     min_eta: float                 # Minimum eta angle (degrees)
     wavelength: float = 0.0        # X-ray wavelength (Angstroms)
-    # Detector tilts (degrees). Applied only in NF mode (flip_y=False), which
-    # compares predictions to raw detector images at pixel level. FF and
-    # pf-HEDM workflows apply a DetCor correction at peak-finding time, so
-    # their centroids are already tilt- and distortion-corrected; the
-    # forward model therefore ignores these fields when flip_y=True to avoid
-    # double-correcting.
-    tx: float = 0.0
-    ty: float = 0.0
-    tz: float = 0.0
+    # Detector tilts (degrees). Applied only in NF mode (flip_y=False) by
+    # default; FF/pf workflows apply a DetCor correction at peak-finding
+    # time so their centroids are already tilt-corrected, and the forward
+    # model ignores tilts in FF mode to avoid double-correcting. To override
+    # this (e.g. to simulate raw multi-panel FF data with no DetCor), set
+    # ``apply_tilts=True`` -- tilts are then applied in FF mode too.
+    #
+    # Each tilt field accepts either a scalar (shared across all
+    # distances/detectors) or a list of length ``n_distances`` (one value
+    # per detector). Combined with ``multi_mode="panel"`` this enables
+    # full multi-panel FF-HEDM forward simulation.
+    tx: "float | list[float]" = 0.0
+    ty: "float | list[float]" = 0.0
+    tz: "float | list[float]" = 0.0
     flip_y: bool = True            # FF/PF: True (DetHor = yBC - ydet/px).
                                    # NF:    False (pixel = yBC + ydet/px).
                                    # Validated against C code conventions.
+    wedge: float = 0.0             # Wedge angle (deg): non-orthogonality
+                                   # of the rotation axis and the X-ray beam.
+                                   # Single global value (not per-detector).
+                                   # Wedge=0 means rotation axis ⟂ beam.
+                                   # Implementation matches CorrectWedge() in
+                                   # FF_HEDM/src/ForwardSimulationCompressed.c.
+    apply_tilts: bool = False      # Force tilt application even in FF mode.
+                                   # Default False preserves the existing
+                                   # behaviour: NF applies tilts, FF skips.
+                                   # Set True for raw multi-panel simulation.
+    multi_mode: str = "layered"    # "layered" (default): NF semantics --
+                                   # spot must land on the detector at
+                                   # EVERY distance (AllDistsFound).
+                                   # "panel": FF multi-detector semantics --
+                                   # spot is valid if it lands on at least
+                                   # one detector; output gains a det_id
+                                   # field naming which one.
 
     @property
     def n_distances(self) -> int:
         return len(self.Lsd) if isinstance(self.Lsd, list) else 1
 
+    @property
+    def n_detectors(self) -> int:
+        """Alias of ``n_distances`` for FF multi-panel readability."""
+        return self.n_distances
+
     def _as_list(self, attr):
         v = getattr(self, attr)
-        return v if isinstance(v, list) else [v]
+        if isinstance(v, list):
+            return v
+        # Broadcast scalar across n_distances so per-detector code paths can
+        # always assume a list-of-N. For scalar attrs that have not yet been
+        # broadcast, this yields a single-element list (n_distances=1).
+        return [v] * self.n_distances
 
 
 @dataclass
@@ -128,19 +160,27 @@ class SpotDescriptors:
     Shape convention: ``(..., K, M)`` where ``K = 2*N`` (two omega solutions
     per position) and ``M`` = number of HKL reflections.
 
-    For multi-distance NF-HEDM, ``y_pixel``, ``z_pixel``, and
-    ``layer_valid`` have an extra leading ``D`` (n_distances) dimension.
-    The ``valid`` mask combines the angular validity with ALL-distances-found.
+    For multi-distance NF-HEDM (``multi_mode="layered"``), ``y_pixel``,
+    ``z_pixel``, and ``layer_valid`` have an extra leading ``D``
+    (n_distances) dimension; ``valid`` combines the angular validity with
+    ALL-distances-found.
+
+    For multi-panel FF-HEDM (``multi_mode="panel"``), ``y_pixel``,
+    ``z_pixel`` are collapsed to a single ``(..., K, M)`` tensor giving the
+    pixel coordinates on the panel where each spot landed; ``det_id`` names
+    that panel (int64 in [0, D)). ``valid`` is True if the spot landed on
+    at least one panel.
     """
     omega: torch.Tensor                      # (..., K, M) radians
     eta: torch.Tensor                        # (..., K, M) radians
     two_theta: torch.Tensor                  # (..., K, M) radians
-    y_pixel: torch.Tensor                    # (D, ..., K, M) or (..., K, M) fractional pixel
-    z_pixel: torch.Tensor                    # (D, ..., K, M) or (..., K, M) fractional pixel
+    y_pixel: torch.Tensor                    # (D, ..., K, M) layered, or (..., K, M) single-distance / panel
+    z_pixel: torch.Tensor                    # (D, ..., K, M) layered, or (..., K, M) single-distance / panel
     frame_nr: torch.Tensor                   # (..., K, M) fractional frame (same at all distances)
-    valid: torch.Tensor                      # (..., K, M) float mask (1=valid at ALL distances)
-    layer_valid: Optional[torch.Tensor] = None  # (D, ..., K, M) per-distance validity
+    valid: torch.Tensor                      # (..., K, M) float mask
+    layer_valid: Optional[torch.Tensor] = None  # (D, ..., K, M) per-distance validity (layered mode only)
     scan_mask: Optional[torch.Tensor] = None    # (..., S, K, M) per-beam-position validity (pf)
+    det_id: Optional[torch.Tensor] = None       # (..., K, M) int64 panel index (panel mode only)
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +222,22 @@ class HEDMForwardModel(nn.Module):
         hkls_int: Optional[torch.Tensor] = None,
         scan_config: Optional[ScanConfig] = None,
         device: torch.device = torch.device("cpu"),
+        compile: "bool | str" = False,
     ):
+        """Build the forward model.
+
+        Parameters
+        ----------
+        compile : bool | str, optional
+            If truthy and ``device.type == "cuda"``, wrap the forward path
+            with ``torch.compile``. Pass ``True`` for the default mode
+            ("reduce-overhead", best for repeated fixed-shape calls) or a
+            string mode such as ``"max-autotune"``. Bit-exact agreement
+            against the eager path was validated on A6000 at fp64; CPU and
+            MPS callers see no benefit and the flag is ignored. The first
+            forward call after construction pays the JIT-trace cost; all
+            subsequent calls run from cache.
+        """
         super().__init__()
 
         self.register_buffer("hkls", hkls.to(device).float())
@@ -198,9 +253,44 @@ class HEDMForwardModel(nn.Module):
         yBC_list = geometry._as_list("y_BC")
         zBC_list = geometry._as_list("z_BC")
         self.n_distances = len(Lsd_list)
-        self.register_buffer("_Lsd", torch.tensor(Lsd_list, dtype=torch.float32, device=device))
-        self.register_buffer("_y_BC", torch.tensor(yBC_list, dtype=torch.float32, device=device))
-        self.register_buffer("_z_BC", torch.tensor(zBC_list, dtype=torch.float32, device=device))
+        # Per-detector geometry stored as nn.Parameter (requires_grad=False
+        # by default) so callers can opt them into gradient-based refinement.
+        self._Lsd = nn.Parameter(
+            torch.tensor(Lsd_list, dtype=torch.float32, device=device),
+            requires_grad=False,
+        )
+        self._y_BC = nn.Parameter(
+            torch.tensor(yBC_list, dtype=torch.float32, device=device),
+            requires_grad=False,
+        )
+        self._z_BC = nn.Parameter(
+            torch.tensor(zBC_list, dtype=torch.float32, device=device),
+            requires_grad=False,
+        )
+
+        # Lsd reparameterisation for the optimiser.
+        #
+        # ``_Lsd`` lives in micrometres (~1e6) for downstream code-clarity,
+        # but joint optimisers see a search direction whose step length is
+        # set by the *smallest* gradient-magnitude parameter -- ~mm-scale
+        # tilt-error gradient -- and that step length is far too small to
+        # move ``_Lsd`` meaningfully. We expose a separate
+        # ``_Lsd_delta_mm`` parameter (initially zero) that the user can
+        # opt into refinement instead of ``_Lsd`` itself, and the effective
+        # Lsd used by the forward is ``_Lsd + 1000 * _Lsd_delta_mm``.
+        # This is a clean reparameterisation: the optimiser sees an
+        # mm-scale variable, the physics still uses um, and there is no
+        # need for gradient hooks. ``_Lsd_delta_mm`` defaults to zero so
+        # behaviour is unchanged when callers ignore it.
+        self._Lsd_delta_mm = nn.Parameter(
+            torch.zeros_like(self._Lsd), requires_grad=False
+        )
+        # Convenience: the same mm-scale reparameterisation idea is *not*
+        # applied to ``_y_BC`` or ``_z_BC`` because they are already in
+        # pixels (~ 1e3) and at a scale where the optimiser handles them
+        # directly without preconditioning. Tilts and grain Eulers are
+        # likewise in their natural units.
+
         # Convenience aliases for single-distance (backward compat / simple access)
         self.Lsd = Lsd_list[0]
         self.y_BC = yBC_list[0]
@@ -215,23 +305,59 @@ class HEDMForwardModel(nn.Module):
         self.wavelength = geometry.wavelength
         self.flip_y = geometry.flip_y
 
-        # Detector tilts (degrees). Stored as an nn.Parameter so they can be
-        # optimised via gradient descent (auto-calibration).  NF mode
-        # (flip_y=False) applies them via _apply_nf_tilt; FF/pf mode
-        # (flip_y=True) ignores them because the experimental pipeline pre-
-        # corrects for detector tilts at peak-finding time.
+        # Per-detector tilts (degrees), shape (D, 3) -- one (tx, ty, tz)
+        # row per detector. Stored as an nn.Parameter so the user can opt
+        # them into gradient-based refinement (auto-calibration).  NF mode
+        # (flip_y=False) always applies them via _apply_tilt; FF/pf mode
+        # (flip_y=True) skips them by default because the experimental
+        # pipeline pre-corrects detector tilts at peak-finding time. Set
+        # ``geometry.apply_tilts=True`` to force tilt application in FF
+        # mode -- needed to simulate raw multi-panel FF data with no DetCor.
         #
         # Composition: RotMatTilts = Rz(tz) @ Ry(ty) @ Rx(tx)
         # Matches RotationTilts() in NF_HEDM/src/SharedFuncsFit.c:230-266.
+        tx_list = geometry._as_list("tx")
+        ty_list = geometry._as_list("ty")
+        tz_list = geometry._as_list("tz")
+        if not (len(tx_list) == len(ty_list) == len(tz_list) == self.n_distances):
+            raise ValueError(
+                "tx/ty/tz lists must each have length n_distances "
+                f"(got {len(tx_list)}, {len(ty_list)}, {len(tz_list)} "
+                f"vs n_distances={self.n_distances})"
+            )
+        tilts_arr = [[float(tx_list[d]), float(ty_list[d]), float(tz_list[d])]
+                     for d in range(self.n_distances)]
         self.tilts = nn.Parameter(
-            torch.tensor([geometry.tx, geometry.ty, geometry.tz],
-                          dtype=torch.float64, device=device),
+            torch.tensor(tilts_arr, dtype=torch.float64, device=device),
             requires_grad=False,
         )
-        self.tx = float(geometry.tx)
-        self.ty = float(geometry.ty)
-        self.tz = float(geometry.tz)
-        self._has_tilts = abs(self.tx) + abs(self.ty) + abs(self.tz) > 0.0
+        # Convenience scalar aliases for single-detector backward compat.
+        # For multi-detector configurations these expose detector 0 only.
+        self.tx = float(tx_list[0])
+        self.ty = float(ty_list[0])
+        self.tz = float(tz_list[0])
+        self._has_tilts = bool(
+            torch.any(torch.abs(self.tilts.detach()) > 0.0).item()
+        )
+
+        # Multi-detector / multi-panel configuration
+        self.apply_tilts = bool(geometry.apply_tilts)
+        if geometry.multi_mode not in ("layered", "panel"):
+            raise ValueError(
+                f"Unknown multi_mode {geometry.multi_mode!r}; "
+                "use 'layered' (NF) or 'panel' (FF multi-detector)."
+            )
+        self.multi_mode = geometry.multi_mode
+
+        # Wedge angle (deg): single global parameter representing the
+        # non-orthogonality of the rotation axis and the beam. Stored as
+        # nn.Parameter so it can be jointly refined.
+        self.wedge = nn.Parameter(
+            torch.tensor(float(geometry.wedge), dtype=torch.float64,
+                          device=device),
+            requires_grad=False,
+        )
+        self._has_wedge = abs(float(geometry.wedge)) > 0.0
 
         # Scan config
         self.scan_config = scan_config
@@ -242,6 +368,39 @@ class HEDMForwardModel(nn.Module):
             self._beam_size = scan_config.beam_size
 
         self.epsilon = 1e-7
+
+        # Optional torch.compile of the forward path. We wrap the bound
+        # ``forward`` method (not the module) and stash it on the instance;
+        # ``__call__`` -> ``self.forward(...)`` then routes through the
+        # compiled callable on every invocation. Skipped on CPU/MPS where
+        # the inductor backend offers no GPU-style fusion benefit and only
+        # adds trace cost.
+        #
+        # Default mode is ``"default"`` (Inductor without CUDA Graphs).
+        # ``"reduce-overhead"`` is materially faster (Track A measured
+        # 17-19x speedup at small N vs ~2-3x for default), but its
+        # CUDA-Graph backing assumes the caller does NOT alias outputs
+        # across calls -- e.g. ``a = model(...); b = model(...)`` then
+        # using ``a`` and ``b`` together raises an aliasing error. Iterative
+        # optimisers and inversion loops violate that, so the safer
+        # ``"default"`` is the right out-of-the-box pick. Users with
+        # alias-clean inner loops can opt into ``compile="reduce-overhead"``.
+        self._compile_mode: Optional[str] = None
+        # Some callers pass device as a string ("cuda", "cpu"); normalise.
+        _dev = torch.device(device) if isinstance(device, str) else device
+        if compile and _dev.type == "cuda":
+            mode = "default" if compile is True else str(compile)
+            self._compile_mode = mode
+            eager_forward = self.forward
+            self.forward = torch.compile(eager_forward, mode=mode, dynamic=False)
+
+    @property
+    def _Lsd_eff(self) -> torch.Tensor:
+        """Effective Lsd in micrometres, including the mm-scale optimiser
+        offset. Use this in the forward path; never compute the projection
+        from ``self._Lsd`` directly when refinement is active.
+        """
+        return self._Lsd + 1000.0 * self._Lsd_delta_mm
 
     # ------------------------------------------------------------------
     #  euler2mat  (ZXZ convention)
@@ -268,18 +427,25 @@ class HEDMForwardModel(nn.Module):
         s0, s1, s2 = s[..., 0], s[..., 1], s[..., 2]
 
         # ZXZ rotation matrix: R = Rz(phi1) @ Rx(Phi) @ Rz(phi2)
-        # Verified element-by-element against nfhedm.py lines 114-120
-        R = torch.zeros(*euler_angles.shape[:-1], 3, 3,
-                        dtype=euler_angles.dtype, device=euler_angles.device)
-        R[..., 0, 0] =  c0 * c2 - s0 * c1 * s2
-        R[..., 0, 1] = -s0 * c1 * c2 - c0 * s2
-        R[..., 0, 2] =  s0 * s1
-        R[..., 1, 0] =  s0 * c2 + c0 * c1 * s2
-        R[..., 1, 1] =  c0 * c1 * c2 - s0 * s2
-        R[..., 1, 2] = -c0 * s1
-        R[..., 2, 0] =  s1 * s2
-        R[..., 2, 1] =  s1 * c2
-        R[..., 2, 2] =  c1
+        # Verified element-by-element against nfhedm.py lines 114-120.
+        # Built via torch.stack rather than indexed assignment so the function
+        # composes with torch.func.vmap (in-place writes block vmap).
+        row0 = torch.stack([
+             c0 * c2 - s0 * c1 * s2,
+            -s0 * c1 * c2 - c0 * s2,
+             s0 * s1,
+        ], dim=-1)
+        row1 = torch.stack([
+             s0 * c2 + c0 * c1 * s2,
+             c0 * c1 * c2 - s0 * s2,
+            -c0 * s1,
+        ], dim=-1)
+        row2 = torch.stack([
+            s1 * s2,
+            s1 * c2,
+            c1,
+        ], dim=-1)
+        R = torch.stack([row0, row1, row2], dim=-2)
 
         return HEDMForwardModel.orthogonalize(R)
 
@@ -563,16 +729,36 @@ class HEDMForwardModel(nn.Module):
         # (rotation preserves norm in exact arithmetic but not in float64).
         # Match C: use |hkls_cart| (pre-rotation), not |R @ hkls_cart|.
         len_hkl = torch.norm(hkls_cart, dim=-1)  # (M,) or (..., M)
-        v = torch.sin(thetas) * len_hkl  # (M,) or (..., M)
-        v = v.unsqueeze(-2).expand_as(G_C[..., 0])  # (..., N, M)
+        v_no_wedge = torch.sin(thetas) * len_hkl  # (M,) or (..., M)
+        v_no_wedge = v_no_wedge.unsqueeze(-2).expand_as(G_C[..., 0])  # (..., N, M)
 
-        # Extract components
-        Gx = G_C[..., 0]  # (..., N, M)
-        Gy = G_C[..., 1]
-        Gz = G_C[..., 2]
+        # ---- Wedge: rigorous geometric formulation -------------------
+        # The rotation axis tilts from z to n_hat = (sin W, 0, cos W).
+        # Full rotation by omega about n_hat:
+        #     R_n_hat(omega) = R_y(W) @ R_z(omega) @ R_y(-W)
+        # so G_lab = R_y(W) @ R_z(omega) @ G',  where G' = R_y(-W) @ G_sample.
+        # Bragg condition -Gx_lab = sin(theta) * |G| reduces to the same
+        # quadratic structure as the no-wedge solver, with substitutions:
+        #     Gx_eff = cos W * G'_x
+        #     Gy_eff = cos W * G'_y
+        #     v_eff  = sin theta * |G| + sin W * G'_z
+        # At W = 0, G' = G_sample and (Gx_eff, Gy_eff, v_eff) collapse to
+        # (Gx, Gy, v), recovering the existing solver bit-identically.
+        wedge_rad = self.wedge.to(dtype) * self.DEG2RAD
+        cos_W = torch.cos(wedge_rad)
+        sin_W = torch.sin(wedge_rad)
+        # G' = R_y(-W) @ G_sample
+        Gx_p = cos_W * G_C[..., 0] - sin_W * G_C[..., 2]  # (..., N, M)
+        Gy_p = G_C[..., 1]
+        Gz_p = sin_W * G_C[..., 0] + cos_W * G_C[..., 2]
+        Gx = cos_W * Gx_p
+        Gy = cos_W * Gy_p
+        Gz = G_C[..., 2]  # unused except for reference; kept for clarity
+        v = v_no_wedge + sin_W * Gz_p
+        # ---------------------------------------------------------------
 
         # Quadratic solver for omega
-        # -Gx*cos(w) + Gy*sin(w) = v
+        # -Gx*cos(w) + Gy*sin(w) = v   (with the effective Gx, Gy, v above)
         # Rearranged: a*cos^2(w) + b*cos(w) + c = 0
         # C uses almostzero=1e-12 for the Gy≈0 branch (see
         # NF_HEDM/src/CalcDiffractionSpots.c:96 and
@@ -636,31 +822,27 @@ class HEDMForwardModel(nn.Module):
         # Concatenate two solutions: (..., 2N, M)
         all_omega = torch.cat([omega_p, omega_n], dim=-2)
 
-        # Build omega rotation matrix for each spot
+        # Rotate G' by omega: m = R_z(omega) @ G' (sample frame, axis-aligned)
+        # then G_lab = R_y(W) @ m. R_z(omega) only mixes (x, y), so we apply
+        # the rotation in closed form rather than materialising a 3x3 matrix
+        # per spot. Double G' along the N dim to match the 2N K-axis of
+        # all_omega.
         cos_w = torch.cos(all_omega)
         sin_w = torch.sin(all_omega)
+        Gx_p_d = torch.cat([Gx_p, Gx_p], dim=-2)   # (..., 2N, M)
+        Gy_p_d = torch.cat([Gy_p, Gy_p], dim=-2)
+        Gz_p_d = torch.cat([Gz_p, Gz_p], dim=-2)
+        m_x = cos_w * Gx_p_d - sin_w * Gy_p_d
+        m_y = sin_w * Gx_p_d + cos_w * Gy_p_d
+        m_z = Gz_p_d
+        # G_lab = R_y(W) @ m
+        Gy_lab = m_y                              # rotation about y leaves y
+        Gz_lab = -sin_W * m_x + cos_W * m_z
 
-        # Construct Rz(omega): rotation around z-axis
-        # [[cos, -sin, 0], [sin, cos, 0], [0, 0, 1]]
-        Omega_mat = torch.zeros(*all_omega.shape, 3, 3,
-                                dtype=all_omega.dtype, device=all_omega.device)
-        Omega_mat[..., 0, 0] = cos_w
-        Omega_mat[..., 0, 1] = -sin_w
-        Omega_mat[..., 1, 0] = sin_w
-        Omega_mat[..., 1, 1] = cos_w
-        Omega_mat[..., 2, 2] = 1.0
-
-        # Rotate G_C by omega: nrot = Omega @ G_C
-        # G_C is (..., N, M, 3); double along N dim (dim=-3)
-        G_C_doubled = torch.cat([G_C, G_C], dim=-3)  # (..., 2N, M, 3)
-        nrot = torch.einsum("...kmij,...kmj->...kmi", Omega_mat, G_C_doubled)
-        nrot_y = nrot[..., 1]  # (..., 2N, M)
-        nrot_z = nrot[..., 2]
-
-        # Eta angle
-        r_yz = torch.sqrt(nrot_y * nrot_y + nrot_z * nrot_z).clamp(min=self.epsilon)
-        eta = self.safe_arccos(nrot_z / r_yz)
-        eta = -torch.sign(nrot_y) * eta
+        # Eta angle from lab-frame (y, z) components.
+        r_yz = torch.sqrt(Gy_lab * Gy_lab + Gz_lab * Gz_lab).clamp(min=self.epsilon)
+        eta = self.safe_arccos(Gz_lab / r_yz)
+        eta = -torch.sign(Gy_lab) * eta
 
         # 2*theta  (broadcast thetas to match 2N dimension)
         two_theta_single = 2.0 * thetas.unsqueeze(-2)  # (..., 1, M) or (1, M)
@@ -703,10 +885,16 @@ class HEDMForwardModel(nn.Module):
         # Composition matches NF C: Rz @ Ry @ Rx
         return (Rz @ Ry @ Rx).to(device)
 
-    def _build_rot_tilts_from_param(self, dtype) -> torch.Tensor:
-        """Build Rz(tz) @ Ry(ty) @ Rx(tx) from self.tilts (differentiable)."""
+    def _build_rot_tilts_from_param(self, dtype, d_idx: int = 0) -> torch.Tensor:
+        """Build Rz(tz) @ Ry(ty) @ Rx(tx) from row ``d_idx`` of self.tilts.
+
+        ``self.tilts`` has shape (D, 3); each row is the (tx, ty, tz)
+        triple for one detector. The returned matrix shares autograd
+        history with self.tilts, so optimising tilts.requires_grad=True
+        feeds gradients back to per-detector tilt entries.
+        """
         d2r = math.pi / 180.0
-        t = self.tilts.to(dtype) * d2r
+        t = self.tilts[d_idx].to(dtype) * d2r
         tx_, ty_, tz_ = t[0], t[1], t[2]
         cx, sx = torch.cos(tx_), torch.sin(tx_)
         cy, sy = torch.cos(ty_), torch.sin(ty_)
@@ -731,8 +919,8 @@ class HEDMForwardModel(nn.Module):
         return Rz @ Ry @ Rx
 
     def _apply_nf_tilt(self, ydet: torch.Tensor, zdet: torch.Tensor,
-                        Lsd_val) -> "tuple[torch.Tensor, torch.Tensor]":
-        """Apply the NF detector-tilt correction to lab-frame (ydet, zdet).
+                        Lsd_val, d_idx: int = 0) -> "tuple[torch.Tensor, torch.Tensor]":
+        """Apply the per-detector tilt correction to lab-frame (ydet, zdet).
 
         Ports the ray-plane intersection in
         ``NF_HEDM/src/SharedFuncsFit.c:947-958``: builds
@@ -740,15 +928,15 @@ class HEDMForwardModel(nn.Module):
         and returns the (y, z) coordinates where the line from P0 through P1
         crosses the plane x = 0. Reduces to the identity when tilts are zero.
 
-        The rotation matrix is rebuilt from ``self.tilts`` on every call, so
-        if ``self.tilts.requires_grad`` is True the tilt parameters enter the
-        autograd graph and can be optimised via gradient descent
-        (auto-calibration). ``Lsd_val`` can be a Python scalar or a scalar tensor.
+        ``d_idx`` selects which detector's (tx, ty, tz) row to use from
+        ``self.tilts``; the returned tensors share autograd history with
+        the tilt parameter so gradient-based refinement of tilts works.
+        ``Lsd_val`` can be a Python scalar or a scalar tensor.
         """
         if not self._has_tilts and not self.tilts.requires_grad:
             return ydet, zdet
         dtype = ydet.dtype
-        R = self._build_rot_tilts_from_param(dtype)
+        R = self._build_rot_tilts_from_param(dtype, d_idx=d_idx)
         # P0 = -Lsd * R[:, 0]  (3 scalars)
         p0x = -Lsd_val * R[0, 0]
         p0y = -Lsd_val * R[1, 0]
@@ -851,7 +1039,7 @@ class HEDMForwardModel(nn.Module):
         # _Lsd, _y_BC, _z_BC are (D,) tensors
         # Reshape to (D, 1..., 1, 1) for broadcasting against (..., 2N, M)
         extra_dims = omega.ndim  # number of dims in (..., 2N, M)
-        Lsd_d = self._Lsd.to(dtype).reshape(D, *([1] * extra_dims))
+        Lsd_d = self._Lsd_eff.to(dtype).reshape(D, *([1] * extra_dims))
         yBC_d = self._y_BC.to(dtype).reshape(D, *([1] * extra_dims))
         zBC_d = self._z_BC.to(dtype).reshape(D, *([1] * extra_dims))
 
@@ -860,29 +1048,33 @@ class HEDMForwardModel(nn.Module):
         ydet_d = y_grain.unsqueeze(0) - dist_d * tan_2th.unsqueeze(0) * sin_eta.unsqueeze(0)
         zdet_d = z_grain.unsqueeze(0) + dist_d * tan_2th.unsqueeze(0) * cos_eta.unsqueeze(0)
 
-        # Apply detector tilt -- NF mode only.
+        # Apply detector tilt.
         #
-        # Design note: FF and pf-HEDM experimental workflows apply a DetCor
-        # correction at peak-finding time, so the per-spot centroids in
-        # SpotMatrix.csv are already tilt- and distortion-corrected.  A
-        # differentiable forward model targeting FF/pf experimental data
-        # therefore must NOT apply tilts -- doing so would double-correct.
-        # NF-HEDM works at pixel level against raw detector images, with no
-        # DetCor step, so the forward model MUST include tilts to produce
-        # pixel predictions that match real NF measurements.
+        # Design note: FF and pf-HEDM *experimental* workflows apply a
+        # DetCor correction at peak-finding time, so the per-spot centroids
+        # in SpotMatrix.csv are already tilt- and distortion-corrected. A
+        # differentiable forward model targeting that data therefore must
+        # NOT apply tilts -- doing so would double-correct. This is why
+        # FF mode (``flip_y=True``) skips tilts by default.
         #
-        # The NF branch below ports the ray-plane intersection from
-        # NF_HEDM/src/SharedFuncsFit.c:947-958 (composition Rz @ Ry @ Rx,
-        # P0 = R @ [-Lsd, 0, 0]). The FF/pf path ignores tilts entirely.
-        if (not self.flip_y) and self._has_tilts:
-            # Per-distance tilt application. Use a loop to keep per-Lsd
-            # handling explicit (typical NF has 1-4 distances).
-            Lsd_list = self._Lsd.to(dtype)
+        # NF-HEDM works at pixel level against raw detector images with no
+        # DetCor step, so the forward model MUST include tilts. Multi-panel
+        # FF synthetic data (this file's panel mode) is in the same boat:
+        # there is no DetCor pre-correction. Set ``apply_tilts=True`` on
+        # the geometry to force tilt application in FF mode.
+        #
+        # Ports the ray-plane intersection in NF_HEDM/src/SharedFuncsFit.c
+        # (composition Rz @ Ry @ Rx, P0 = R @ [-Lsd, 0, 0]) per detector,
+        # using row d of self.tilts.
+        tilts_active = self._has_tilts or self.tilts.requires_grad
+        apply = tilts_active and ((not self.flip_y) or self.apply_tilts)
+        if apply:
+            Lsd_list = self._Lsd_eff.to(dtype)
             out_y = []
             out_z = []
             for d in range(self.n_distances):
                 yd, zd = self._apply_nf_tilt(
-                    ydet_d[d], zdet_d[d], Lsd_list[d]
+                    ydet_d[d], zdet_d[d], Lsd_list[d], d_idx=d
                 )
                 out_y.append(yd)
                 out_z.append(zd)
@@ -895,27 +1087,53 @@ class HEDMForwardModel(nn.Module):
         y_pixel_d = yBC_d + y_sign * ydet_d / self.px  # (D, ..., 2N, M)
         z_pixel_d = zBC_d + zdet_d / self.px
 
-        # Per-distance detector bounds
+        # Per-detector / per-distance bounds check
         layer_bounds_ok = (
             (y_pixel_d >= 0) & (y_pixel_d < self.n_pixels_y) &
             (z_pixel_d >= 0) & (z_pixel_d < self.n_pixels_z)
         )  # (D, ..., 2N, M)
 
-        # Per-distance validity = angular valid & frame ok & detector bounds
-        layer_valid = valid.unsqueeze(0) * frame_ok.unsqueeze(0).float() * layer_bounds_ok.float()
+        # Per-detector validity = angular valid & frame ok & on-detector
+        layer_valid = (
+            valid.unsqueeze(0) * frame_ok.unsqueeze(0).float()
+            * layer_bounds_ok.float()
+        )
 
-        # Overall valid = valid at ALL distances (AllDistsFound)
-        all_dists_valid = layer_valid.prod(dim=0)  # (..., 2N, M)
-
-        # For single-distance, squeeze out the D dimension for convenience
-        if D == 1:
-            y_pixel_out = y_pixel_d.squeeze(0)
-            z_pixel_out = z_pixel_d.squeeze(0)
-            layer_valid_out = None
-        else:
-            y_pixel_out = y_pixel_d
-            z_pixel_out = z_pixel_d
+        if self.multi_mode == "layered":
+            # NF semantics: spot must be on every layer (AllDistsFound).
+            overall_valid = layer_valid.prod(dim=0)  # (..., 2N, M)
+            if D == 1:
+                y_pixel_out = y_pixel_d.squeeze(0)
+                z_pixel_out = z_pixel_d.squeeze(0)
+                layer_valid_out = None
+            else:
+                y_pixel_out = y_pixel_d
+                z_pixel_out = z_pixel_d
+                layer_valid_out = layer_valid
+            det_id_out = None
+        elif self.multi_mode == "panel":
+            # FF multi-panel semantics: spot is valid if it lands on at
+            # least one panel; record which panel it landed on.
+            #
+            # We pick the first panel where layer_valid > 0.5. With
+            # physically separated panels (typical multi-panel setups)
+            # there is no overlap, so "first" == "the" panel. If panels
+            # do overlap, this returns the lowest-index hit -- a
+            # deterministic but arbitrary tiebreak.
+            valid_bool = layer_valid > 0.5  # (D, ..., 2N, M) bool
+            any_panel = valid_bool.any(dim=0)  # (..., 2N, M)
+            # argmax of bool along D returns the first True (or 0 if none).
+            # We mask out the "or 0 if none" case via any_panel below.
+            det_id_out = valid_bool.float().argmax(dim=0).to(torch.int64)
+            # Gather y_pixel / z_pixel along D using det_id.
+            #   y_pixel_d: (D, ..., 2N, M); det_id: (..., 2N, M)
+            gather_idx = det_id_out.unsqueeze(0)  # (1, ..., 2N, M)
+            y_pixel_out = torch.gather(y_pixel_d, 0, gather_idx).squeeze(0)
+            z_pixel_out = torch.gather(z_pixel_d, 0, gather_idx).squeeze(0)
+            overall_valid = any_panel.float()
             layer_valid_out = layer_valid
+        else:
+            raise RuntimeError(f"Internal: unknown multi_mode {self.multi_mode!r}")
 
         return SpotDescriptors(
             omega=omega,
@@ -924,8 +1142,9 @@ class HEDMForwardModel(nn.Module):
             y_pixel=y_pixel_out,
             z_pixel=z_pixel_out,
             frame_nr=frame_nr,
-            valid=all_dists_valid,
+            valid=overall_valid,
             layer_valid=layer_valid_out,
+            det_id=det_id_out,
         )
 
     # ------------------------------------------------------------------

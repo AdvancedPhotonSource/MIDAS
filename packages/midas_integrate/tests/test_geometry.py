@@ -16,6 +16,7 @@ from midas_integrate.geometry import (
     calc_eta_angle,
     circle_seg_intersect,
     invert_REta_to_pixel,
+    invert_REta_to_pixel_batch,
     pixel_to_REta,
     polygon_area,
     ray_seg_intersect,
@@ -70,6 +71,54 @@ def test_invert_round_trip():
     )
     assert abs(float(R_back) - R_target) < 1e-4
     assert abs(float(eta_back) - eta_target) < 1e-4
+
+
+def test_invert_REta_to_pixel_batch_matches_scalar():
+    """Batched Newton inversion agrees point-for-point with the scalar
+    version on a calibrant-shaped sweep (5 rings × 360 η bins)."""
+    Ycen, Zcen = 700.0, 865.0
+    TRs = build_tilt_matrix(0.05, 0.18, 0.53)
+    common = dict(
+        Ycen=Ycen, Zcen=Zcen, TRs=TRs,
+        Lsd=580_000.0, RhoD=2200.0, px=172.0,
+        # Throw in a couple of non-trivial distortion coefficients to make
+        # sure the per-point param plumbing is identical scalar vs batch.
+        p2=1e-4, p7=2e-3, p8=15.0,
+    )
+    rng = np.random.default_rng(0)
+    R_targets = np.repeat(np.linspace(120.0, 480.0, 5), 360) \
+        + rng.uniform(-0.5, 0.5, 5 * 360)
+    Eta_targets = np.tile(np.linspace(-179.5, 179.5, 360), 5)
+
+    Y_scalar = np.empty_like(R_targets)
+    Z_scalar = np.empty_like(R_targets)
+    for i in range(R_targets.shape[0]):
+        Y_scalar[i], Z_scalar[i] = invert_REta_to_pixel(
+            float(R_targets[i]), float(Eta_targets[i]), **common,
+        )
+
+    Y_batch, Z_batch = invert_REta_to_pixel_batch(
+        R_targets, Eta_targets, **common,
+    )
+
+    np.testing.assert_allclose(Y_batch, Y_scalar, atol=1e-6)
+    np.testing.assert_allclose(Z_batch, Z_scalar, atol=1e-6)
+
+
+def test_invert_REta_to_pixel_batch_scalar_input():
+    """1-element array input should round-trip and match the scalar path."""
+    Ycen, Zcen = 100.0, 200.0
+    TRs = build_tilt_matrix(0, 0, 0)
+    common = dict(
+        Ycen=Ycen, Zcen=Zcen, TRs=TRs,
+        Lsd=1_000_000.0, RhoD=2000.0, px=200.0,
+    )
+    Y_b, Z_b = invert_REta_to_pixel_batch(
+        np.array([150.0]), np.array([45.0]), **common,
+    )
+    Y_s, Z_s = invert_REta_to_pixel(150.0, 45.0, **common)
+    assert abs(Y_b[0] - Y_s) < 1e-6
+    assert abs(Z_b[0] - Z_s) < 1e-6
 
 
 def test_REta_to_YZ_round_trip():

@@ -307,6 +307,101 @@ def invert_REta_to_pixel(
     return Y, Z
 
 
+def invert_REta_to_pixel_batch(
+    R_targets, Eta_targets, *,
+    Ycen: float, Zcen: float,
+    TRs: np.ndarray, Lsd: float, RhoD: float, px: float,
+    p0: float = 0.0, p1: float = 0.0, p2: float = 0.0, p3: float = 0.0,
+    p4: float = 0.0, p5: float = 0.0, p6: float = 0.0, p7: float = 0.0,
+    p8: float = 0.0, p9: float = 0.0, p10: float = 0.0, p11: float = 0.0,
+    p12: float = 0.0, p13: float = 0.0, p14: float = 0.0,
+    parallax: float = 0.0,
+    max_iter: int = 10,
+    tol_R: float = 1e-8,
+    tol_eta: float = 1e-8,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Vectorized Newton-Raphson inversion over N targets in lock-step.
+
+    Same physics as :func:`invert_REta_to_pixel` but iterates the whole
+    batch at once: each Newton iteration evaluates ``pixel_to_REta``
+    three times on the full batch (centre, +h Y perturb, +h Z perturb)
+    rather than three times per point. For the ~1000-point E-step in
+    midas-calibrate this collapses ~30 000 scalar Python calls into 30
+    array calls.
+
+    Convergence is per-point: once a point hits the ``(tol_R, tol_eta)``
+    tolerance window, subsequent iterations leave its (Y, Z) unchanged.
+    Points whose Jacobian becomes singular freeze in place (matches the
+    scalar version's ``if abs(det) < 1e-30: break`` semantics).
+
+    Parameters mirror :func:`invert_REta_to_pixel` exactly. Inputs may be
+    Python scalars, lists, or numpy arrays; output is always a pair of
+    numpy float64 arrays with shape ``(N,)`` (or ``()`` for scalar input).
+
+    Returns
+    -------
+    Y, Z : np.ndarray
+        Same shape as broadcast of ``R_targets`` and ``Eta_targets``.
+    """
+    R_targets = np.asarray(R_targets, dtype=np.float64)
+    Eta_targets = np.asarray(Eta_targets, dtype=np.float64)
+    # Broadcast to a common shape.
+    R_targets, Eta_targets = np.broadcast_arrays(R_targets, Eta_targets)
+    R_targets = np.ascontiguousarray(R_targets)
+    Eta_targets = np.ascontiguousarray(Eta_targets)
+
+    Y = Ycen + R_targets * np.sin(Eta_targets * DEG2RAD)
+    Z = Zcen + R_targets * np.cos(Eta_targets * DEG2RAD)
+    h = 0.01
+
+    fwd_kwargs = dict(
+        Ycen=Ycen, Zcen=Zcen, TRs=TRs, Lsd=Lsd, RhoD=RhoD, px=px,
+        p0=p0, p1=p1, p2=p2, p3=p3, p4=p4, p5=p5, p6=p6, p7=p7,
+        p8=p8, p9=p9, p10=p10, p11=p11, p12=p12, p13=p13, p14=p14,
+        parallax=parallax,
+    )
+
+    for _ in range(max_iter):
+        R_eval, Eta_eval = pixel_to_REta(Y, Z, **fwd_kwargs)
+        R_eval = np.asarray(R_eval, dtype=np.float64)
+        Eta_eval = np.asarray(Eta_eval, dtype=np.float64)
+        dR = R_targets - R_eval
+        dEta = Eta_targets - Eta_eval
+        # Wrap the angular residual to (-180, 180]; matches scalar branch.
+        dEta = np.where(dEta > 180.0, dEta - 360.0, dEta)
+        dEta = np.where(dEta < -180.0, dEta + 360.0, dEta)
+
+        active = (np.abs(dR) >= tol_R) | (np.abs(dEta) >= tol_eta)
+        if not active.any():
+            break
+
+        # Vectorized two-sided numerical Jacobian: three evaluations per
+        # iteration over the whole batch instead of three per point.
+        R_dY, Eta_dY = pixel_to_REta(Y + h, Z, **fwd_kwargs)
+        R_dZ, Eta_dZ = pixel_to_REta(Y, Z + h, **fwd_kwargs)
+        R_dY = np.asarray(R_dY, dtype=np.float64)
+        R_dZ = np.asarray(R_dZ, dtype=np.float64)
+        Eta_dY = np.asarray(Eta_dY, dtype=np.float64)
+        Eta_dZ = np.asarray(Eta_dZ, dtype=np.float64)
+        dRdY = (R_dY - R_eval) / h
+        dRdZ = (R_dZ - R_eval) / h
+        dEdY = (Eta_dY - Eta_eval) / h
+        dEdZ = (Eta_dZ - Eta_eval) / h
+        det = dRdY * dEdZ - dRdZ * dEdY
+        # Mask out singular Jacobians (matches scalar ``break`` -- those
+        # points freeze at their current (Y, Z)).
+        non_singular = np.abs(det) >= 1e-30
+        update_mask = active & non_singular
+        # Safe divisor to avoid runtime warnings; result on frozen points
+        # is discarded by the mask below.
+        safe_det = np.where(non_singular, det, 1.0)
+        deltaY = (dEdZ * dR - dRdZ * dEta) / safe_det
+        deltaZ = (dRdY * dEta - dEdY * dR) / safe_det
+        Y = np.where(update_mask, Y + deltaY, Y)
+        Z = np.where(update_mask, Z + deltaZ, Z)
+    return Y, Z
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Bin edges
 # ─────────────────────────────────────────────────────────────────────────────
