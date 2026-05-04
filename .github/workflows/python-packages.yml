@@ -32,6 +32,7 @@ jobs:
           - midas_diffract
           - midas_index
           - midas_transforms
+          - midas_nf_preprocess
 
     steps:
       - uses: actions/checkout@v4
@@ -72,6 +73,15 @@ jobs:
           pip install -e packages/midas_peakfit
           pip install -e packages/midas_calibrate
 
+      # midas_nf_preprocess depends on midas-diffract (>=0.1.0) and
+      # midas-stress (>=0.6.0). Install the in-repo dev versions so the
+      # resolver finds them locally.
+      - name: Install in-repo sibling MIDAS packages (midas_nf_preprocess only)
+        if: matrix.package == 'midas_nf_preprocess'
+        run: |
+          pip install -e packages/midas_stress
+          pip install -e packages/midas_diffract
+
       - name: Install ${{ matrix.package }} (editable, with dev extras)
         run: pip install -e "packages/${{ matrix.package }}[dev]"
 
@@ -85,15 +95,16 @@ jobs:
 
   # ─── Build + publish: triggered by GitHub release only ────────────────────
   # The tag name selects which package to publish:
-  #   midas-stress-v*     → midas_stress
-  #   midas-params-v*     → midas_params
-  #   midas-peakfit-v*    → midas_peakfit
-  #   midas-integrate-v*  → midas_integrate
-  #   midas-hkls-v*       → midas_hkls
-  #   midas-calibrate-v*  → midas_calibrate
-  #   midas-diffract-v*   → midas_diffract
-  #   midas-index-v*      → midas_index
-  #   midas-transforms-v* → midas_transforms
+  #   midas-stress-v*        → midas_stress
+  #   midas-params-v*        → midas_params
+  #   midas-peakfit-v*       → midas_peakfit
+  #   midas-integrate-v*     → midas_integrate
+  #   midas-hkls-v*          → midas_hkls
+  #   midas-calibrate-v*     → midas_calibrate
+  #   midas-diffract-v*      → midas_diffract
+  #   midas-index-v*         → midas_index
+  #   midas-transforms-v*    → midas_transforms
+  #   midas-nf-preprocess-v* → midas_nf_preprocess
   #
   # Release tags without one of these prefixes are ignored (no-op build).
   build:
@@ -138,6 +149,9 @@ jobs:
           elif [[ "$TAG" == midas-transforms-v* ]]; then
             echo "package=midas_transforms" >> "$GITHUB_OUTPUT"
             echo "pypi_name=midas-transforms" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == midas-nf-preprocess-v* ]]; then
+            echo "package=midas_nf_preprocess" >> "$GITHUB_OUTPUT"
+            echo "pypi_name=midas-nf-preprocess" >> "$GITHUB_OUTPUT"
           else
             echo "Tag $TAG does not match any known package prefix; skipping."
             echo "package=" >> "$GITHUB_OUTPUT"

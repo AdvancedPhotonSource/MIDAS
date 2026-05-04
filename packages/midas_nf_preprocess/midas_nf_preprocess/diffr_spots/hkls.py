@@ -1,0 +1,118 @@
+"""Readers for hkls.csv and SeedOrientations CSV files.
+
+The HKL CSV format is the one written by ``GetHKLListNF``:
+
+    header line (skipped)
+    col0 col1 col2 col3 h k l ringnr theta col9 col10
+    ...
+
+(see MakeDiffrSpots.c L489-L495). The dummy columns hold space-group symmetry
+multiplicities and ring radii that the C ignores.
+
+The SeedOrientations file is a comma-separated list of quaternions (one per
+line, ``w,x,y,z``).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional, Union
+
+import numpy as np
+import torch
+
+
+@dataclass
+class HKLEntry:
+    """A single entry from hkls.csv."""
+
+    h: int
+    k: int
+    l: int
+    ring_nr: int
+    theta_deg: float
+
+
+def read_hkls_csv(
+    path: Union[str, Path],
+    *,
+    rings_to_use: Optional[list[int]] = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Parse a MIDAS hkls.csv file.
+
+    Returns
+    -------
+    hkls       : Tensor of shape ``(M, 3)`` -- ``(h, k, l)`` as float64.
+    thetas     : Tensor of shape ``(M,)`` -- Bragg angles in degrees.
+    ring_nrs   : Tensor of shape ``(M,)`` -- ring number for each HKL.
+
+    If ``rings_to_use`` is given, only entries whose ring number is in that
+    list are kept (matches C L496-L519).
+    """
+    path = Path(path)
+    hkls: list[tuple[float, float, float]] = []
+    thetas: list[float] = []
+    rings: list[int] = []
+    with open(path, "r") as f:
+        f.readline()  # header
+        for line in f:
+            parts = line.split()
+            if len(parts) < 9:
+                continue
+            # C scanf: "%s %s %s %s %lf %lf %lf %lf %lf %s %s"
+            #          d  d  d  d  ringnr h    k    l    theta d  d
+            ring_nr = int(float(parts[4]))
+            h = float(parts[5])
+            k = float(parts[6])
+            l = float(parts[7])
+            theta = float(parts[8])
+            if rings_to_use is not None and ring_nr not in rings_to_use:
+                continue
+            hkls.append((h, k, l))
+            thetas.append(theta)
+            rings.append(ring_nr)
+    if not hkls:
+        return (
+            torch.empty((0, 3), dtype=torch.float64),
+            torch.empty((0,), dtype=torch.float64),
+            torch.empty((0,), dtype=torch.int64),
+        )
+    return (
+        torch.tensor(hkls, dtype=torch.float64),
+        torch.tensor(thetas, dtype=torch.float64),
+        torch.tensor(rings, dtype=torch.int64),
+    )
+
+
+def read_seed_orientations(
+    path: Union[str, Path],
+    *,
+    nr_orientations: Optional[int] = None,
+    dtype: torch.dtype = torch.float64,
+) -> torch.Tensor:
+    """Parse a SeedOrientations file (one comma-separated quaternion per line).
+
+    Returns
+    -------
+    Tensor of shape ``(N, 4)`` with quaternion order ``(w, x, y, z)``.
+    """
+    path = Path(path)
+    quats: list[tuple[float, float, float, float]] = []
+    with open(path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 4:
+                # Tolerate whitespace-separated too.
+                parts = line.split()
+            if len(parts) < 4:
+                continue
+            quats.append(tuple(float(p) for p in parts[:4]))
+    if nr_orientations is not None and len(quats) != nr_orientations:
+        raise ValueError(
+            f"{path}: expected {nr_orientations} orientations, found {len(quats)}"
+        )
+    return torch.tensor(quats, dtype=dtype)
