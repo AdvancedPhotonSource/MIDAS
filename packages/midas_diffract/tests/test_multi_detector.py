@@ -265,15 +265,19 @@ def test_per_detector_tilt_gradient_finite_difference():
     or out of bounds, producing a finite-jump term that autograd does
     not see. We instead build a smooth loss over only the spots that are
     valid on detector 1 and stay valid across the FD step.
+
+    Runs in float64: the pixel-squared loss is ~1e9, so central FD with
+    eps=1e-3 has ~1.6% noise/signal in float32 (catastrophic cancellation
+    in l_plus - l_minus), well above the 5e-3 tolerance below.
     """
     hkls, thetas, _ = _au_hkls()
     g = _ring_geometry(4, apply_tilts=True, mode="panel")
-    model = HEDMForwardModel(hkls, thetas, g)
+    model = HEDMForwardModel(hkls, thetas, g).double()
     model.tilts.requires_grad_(True)
 
     torch.manual_seed(3)
-    euler = torch.rand(3, 3) * (2 * math.pi)
-    pos = torch.zeros(3, 3)
+    euler = (torch.rand(3, 3) * (2 * math.pi)).double()
+    pos = torch.zeros(3, 3, dtype=torch.float64)
 
     # Pin the spot subset (mask) at the unperturbed configuration so the FD
     # step doesn't change which spots contribute to the loss.
