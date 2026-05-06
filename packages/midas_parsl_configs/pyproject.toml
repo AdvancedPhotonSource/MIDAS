@@ -23,7 +23,7 @@ dependencies = [
 midas-parsl-configs = "midas_parsl_configs.cli:main"
 
 [project.optional-dependencies]
-test = ["pytest"]
+dev = ["pytest"]
 
 [tool.setuptools.packages.find]
 include = ["midas_parsl_configs*"]
