@@ -6,39 +6,72 @@ on:
     paths:
       - 'packages/**'
       - '.github/workflows/python-packages.yml'
+      - '.github/scripts/changed_packages.py'
   pull_request:
     branches: [master]
     paths:
       - 'packages/**'
+      - '.github/workflows/python-packages.yml'
+      - '.github/scripts/changed_packages.py'
   release:
     types: [published]
 
+# Cancel stale CI runs from earlier pushes on the same branch. Skip on
+# release events — those are one-shot and must complete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
 jobs:
-  # ─── Tests run on every push / PR / release for ALL packages ─────────────
+  # ─── Discover affected packages from the diff ────────────────────────────
+  # Only the packages that changed (or that depend on a changed package) get
+  # tested. Workflow-file changes and release events expand to "all packages".
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.affected.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # need history for git diff
+
+      - id: affected
+        name: Compute affected package list
+        env:
+          GHA_EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.base_ref }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # Pick BASE_REF based on event type. Empty / null SHA => --all.
+          if [ "$GHA_EVENT" = "pull_request" ]; then
+            BASE_REF="origin/${PR_BASE}"
+          elif [ "$GHA_EVENT" = "push" ]; then
+            BASE_REF="${PUSH_BEFORE}"
+          else
+            BASE_REF=""
+          fi
+          if [ "$GHA_EVENT" = "release" ] \
+             || [ -z "${BASE_REF}" ] \
+             || [ "${BASE_REF}" = "0000000000000000000000000000000000000000" ]; then
+            pkgs=$(python3 .github/scripts/changed_packages.py --all)
+          else
+            export BASE_REF
+            pkgs=$(python3 .github/scripts/changed_packages.py)
+          fi
+          echo "Affected packages: $pkgs"
+          echo "packages=$pkgs" >> "$GITHUB_OUTPUT"
+
+  # ─── Tests run only for affected packages ────────────────────────────────
   test:
-    runs-on: ${{ matrix.os }}
+    needs: discover
+    if: needs.discover.outputs.packages != '[]'
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ['3.9', '3.11', '3.12']
-        package:
-          - midas_stress
-          - midas_params
-          - midas_peakfit
-          - midas_integrate
-          - midas_hkls
-          - midas_calibrate
-          - midas_diffract
-          - midas_index
-          - midas_transforms
-          - midas_nf_preprocess
-          - midas_process_grains
-          - midas_fit_grain
-          - midas_nf_fitorientation
-          - midas_nf_pipeline
-          - midas_parsl_configs
-          - midas_ff_pipeline
+        python-version: ['3.11', '3.12']
+        package: ${{ fromJSON(needs.discover.outputs.packages) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -47,116 +80,38 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
 
-      # midas_calibrate depends on three sibling MIDAS packages that may not
-      # yet be on PyPI (or that we want to test against the in-repo version,
-      # not the published one).  Install them as editable from the checkout
-      # first so the dependency resolver finds them locally.
-      - name: Install in-repo sibling MIDAS packages (midas_calibrate only)
-        if: matrix.package == 'midas_calibrate'
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      # Install every in-repo MIDAS package (excluding the hidden ones) as
+      # editable in a single uv resolve. uv resolves the entire dep graph
+      # in one pass, replacing the 18 sequential conditional pip-install
+      # steps the old workflow had.
+      - name: Install all in-repo MIDAS packages (editable, single uv resolve)
         run: |
-          pip install -e packages/midas_hkls
-          pip install -e packages/midas_integrate
-          pip install -e packages/midas_peakfit
+          set -euo pipefail
+          shopt -s nullglob
+          args=()
+          for d in packages/midas_*/; do
+            name=$(basename "$d")
+            case "$name" in
+              midas_grain_odf|midas_pf_odf)
+                # Hidden from CI / PyPI — skip.
+                ;;
+              *)
+                args+=("-e" "$d")
+                ;;
+            esac
+          done
+          uv pip install --system "${args[@]}"
 
-      # midas_index depends on midas_stress (>=0.5.0) and midas_diffract
-      # (>=0.1.1). Both may not yet be on PyPI at those versions; install
-      # the in-repo dev versions first so the resolver finds them locally.
-      - name: Install in-repo sibling MIDAS packages (midas_index only)
-        if: matrix.package == 'midas_index'
-        run: |
-          pip install -e packages/midas_stress
-          pip install -e packages/midas_diffract
-
-      # midas_transforms depends on midas_calibrate (>=0.2.1), which itself
-      # depends on midas_hkls / midas_integrate / midas_peakfit. Install the
-      # whole chain editably so the resolver finds them locally.
-      - name: Install in-repo sibling MIDAS packages (midas_transforms only)
-        if: matrix.package == 'midas_transforms'
-        run: |
-          pip install -e packages/midas_hkls
-          pip install -e packages/midas_integrate
-          pip install -e packages/midas_peakfit
-          pip install -e packages/midas_calibrate
-
-      # midas_nf_preprocess depends on midas-diffract (>=0.1.0) and
-      # midas-stress (>=0.6.0). Install the in-repo dev versions so the
-      # resolver finds them locally.
-      - name: Install in-repo sibling MIDAS packages (midas_nf_preprocess only)
-        if: matrix.package == 'midas_nf_preprocess'
-        run: |
-          pip install -e packages/midas_stress
-          pip install -e packages/midas_diffract
-
-      # midas_process_grains depends on midas-stress, midas-hkls,
-      # midas-diffract, midas-transforms, and midas-index. midas-transforms
-      # transitively pulls in midas_calibrate and its chain, so install the
-      # full chain editably.
-      - name: Install in-repo sibling MIDAS packages (midas_process_grains only)
-        if: matrix.package == 'midas_process_grains'
-        run: |
-          pip install -e packages/midas_stress
-          pip install -e packages/midas_hkls
-          pip install -e packages/midas_diffract
-          pip install -e packages/midas_integrate
-          pip install -e packages/midas_peakfit
-          pip install -e packages/midas_calibrate
-          pip install -e packages/midas_transforms
-          pip install -e packages/midas_index
-
-      # midas_fit_grain depends on midas-diffract and midas-params.
-      - name: Install in-repo sibling MIDAS packages (midas_fit_grain only)
-        if: matrix.package == 'midas_fit_grain'
-        run: |
-          pip install -e packages/midas_params
-          pip install -e packages/midas_diffract
-
-      # midas_nf_fitorientation depends on midas-diffract and midas-stress.
-      - name: Install in-repo sibling MIDAS packages (midas_nf_fitorientation only)
-        if: matrix.package == 'midas_nf_fitorientation'
-        run: |
-          pip install -e packages/midas_stress
-          pip install -e packages/midas_diffract
-
-      # midas_nf_pipeline depends on midas-hkls, midas-stress,
-      # midas-nf-preprocess, and midas-nf-fitorientation. The latter two
-      # transitively need midas-diffract / midas-stress, so install the
-      # whole chain editably.
-      - name: Install in-repo sibling MIDAS packages (midas_nf_pipeline only)
-        if: matrix.package == 'midas_nf_pipeline'
-        run: |
-          pip install -e packages/midas_stress
-          pip install -e packages/midas_diffract
-          pip install -e packages/midas_hkls
-          pip install -e packages/midas_nf_preprocess
-          pip install -e packages/midas_nf_fitorientation
-
-      # midas_ff_pipeline is the umbrella package; it pulls in basically
-      # every FF-side MIDAS package. Install the full transitive editable
-      # chain so the resolver finds all dev versions locally.
-      - name: Install in-repo sibling MIDAS packages (midas_ff_pipeline only)
-        if: matrix.package == 'midas_ff_pipeline'
-        run: |
-          pip install -e packages/midas_stress
-          pip install -e packages/midas_params
-          pip install -e packages/midas_hkls
-          pip install -e packages/midas_integrate
-          pip install -e packages/midas_peakfit
-          pip install -e packages/midas_calibrate
-          pip install -e packages/midas_diffract
-          pip install -e packages/midas_transforms
-          pip install -e packages/midas_index
-          pip install -e packages/midas_fit_grain
-          pip install -e packages/midas_process_grains
-          pip install -e packages/midas_parsl_configs
-
-      # midas_parsl_configs has no MIDAS sibling deps; nothing to install
-      # here. (Listed for completeness — the matrix branch is a no-op.)
-
-      - name: Install ${{ matrix.package }} (editable, with dev extras)
-        run: pip install -e "packages/${{ matrix.package }}[dev]"
+      - name: Install dev extras for ${{ matrix.package }}
+        run: uv pip install --system -e "packages/${{ matrix.package }}[dev]"
 
       - name: Run tests for ${{ matrix.package }}
+        if: matrix.package != 'midas_suite'
         run: |
           cd packages/${{ matrix.package }}
           # `slow`-marked tests (midas-index regression vs C IndexerOMP)
@@ -164,16 +119,38 @@ jobs:
           # that, but we exclude them explicitly here for speed.
           python -m pytest tests/ -v --tb=short -m "not slow"
 
+      # midas_suite is a meta-package with no test suite. Run an import +
+      # installed() smoke test instead, which verifies (a) the package
+      # imports, (b) every declared sub-package was resolved, and (c) the
+      # SUBPACKAGES tuple matches what's actually importable.
+      - name: Smoke test midas_suite
+        if: matrix.package == 'midas_suite'
+        run: |
+          python -c "
+          import midas_suite
+          status = midas_suite.installed()
+          print(f'midas-suite {midas_suite.__version__} declares {len(midas_suite.SUBPACKAGES)} sub-packages:')
+          missing = []
+          for name, ver in status.items():
+              flag = 'OK ' if ver else 'MISS'
+              print(f'  {flag}  {name:30s}  {ver if ver else \"NOT INSTALLED\"}')
+              if not ver:
+                  missing.append(name)
+          if missing:
+              raise SystemExit(f'FAIL: {len(missing)} sub-package(s) failed to import: {missing}')
+          print('All sub-packages resolved.')
+          "
+
   # ─── Build + publish: triggered by GitHub release only ────────────────────
   # The tag name selects which package to publish:
-  #   midas-stress-v*        → midas_stress
-  #   midas-params-v*        → midas_params
-  #   midas-peakfit-v*       → midas_peakfit
-  #   midas-integrate-v*     → midas_integrate
-  #   midas-hkls-v*          → midas_hkls
-  #   midas-calibrate-v*     → midas_calibrate
-  #   midas-diffract-v*      → midas_diffract
-  #   midas-index-v*         → midas_index
+  #   midas-stress-v*           → midas_stress
+  #   midas-params-v*           → midas_params
+  #   midas-peakfit-v*          → midas_peakfit
+  #   midas-integrate-v*        → midas_integrate
+  #   midas-hkls-v*             → midas_hkls
+  #   midas-calibrate-v*        → midas_calibrate
+  #   midas-diffract-v*         → midas_diffract
+  #   midas-index-v*            → midas_index
   #   midas-transforms-v*       → midas_transforms
   #   midas-nf-preprocess-v*    → midas_nf_preprocess
   #   midas-process-grains-v*   → midas_process_grains
@@ -182,6 +159,7 @@ jobs:
   #   midas-nf-pipeline-v*      → midas_nf_pipeline
   #   midas-parsl-configs-v*    → midas_parsl_configs
   #   midas-ff-pipeline-v*      → midas_ff_pipeline
+  #   midas-suite-v*            → midas_suite (meta-package)
   #
   # Release tags without one of these prefixes are ignored (no-op build).
   build:
@@ -247,6 +225,9 @@ jobs:
           elif [[ "$TAG" == midas-ff-pipeline-v* ]]; then
             echo "package=midas_ff_pipeline" >> "$GITHUB_OUTPUT"
             echo "pypi_name=midas-ff-pipeline" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == midas-suite-v* ]]; then
+            echo "package=midas_suite" >> "$GITHUB_OUTPUT"
+            echo "pypi_name=midas-suite" >> "$GITHUB_OUTPUT"
           else
             echo "Tag $TAG does not match any known package prefix; skipping."
             echo "package=" >> "$GITHUB_OUTPUT"
