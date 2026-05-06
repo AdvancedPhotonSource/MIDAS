@@ -27,6 +27,12 @@ dependencies = [
 dev = [
     "pytest>=7",
     "pandas>=1.5",
+    # Pull the CIF backend and torch into the dev extras so the full test
+    # suite runs in CI. Without these, tests that hit the CIF reader or
+    # the autograd structure-factor path fail (rather than skip) because
+    # not every test carries a pytest.importorskip guard.
+    "gemmi>=0.6",
+    "torch>=2.0",
 ]
 torch = [
     "torch>=2.0",
