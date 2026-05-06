@@ -80,10 +80,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
+          # No `cache: pip` — we install via uv, so pip's cache dir
+          # (~/.cache/pip) is never populated. setup-uv handles its own
+          # cache below.
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/**/pyproject.toml'
 
       # Install every in-repo MIDAS package (excluding the hidden ones) as
       # editable in a single uv resolve. uv resolves the entire dep graph
