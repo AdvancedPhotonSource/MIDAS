@@ -243,9 +243,25 @@ def process_seed(
             ys=ys, zs=zs, ttheta_deg=ttheta, eta_deg=seed_eta, omega_deg=seed_omega,
             ring_nr=seed_ring_nr, ring_rad=ring_rad,
             rsample=p.Rsample, hbeam=p.Hbeam,
-            ome_tol=p.MarginOme, radius_tol=p.MarginRad,
+            ome_tol=p.MarginOme, radius_tol=p.MarginRadial,
             obs_spots=ctx.obs, device=ctx.device, dtype=ctx.dtype,
         )
+        # C parity: when the strict friedel-pair search finds no obs
+        # partner (e.g., partner was unobserved or fell outside the
+        # geometric band at eta near 90 ± eta_equator), fall back to
+        # the "mixed" search that doesn't require an obs partner.
+        # See IndexerOMP.c:1808-1822 — `if (nPlaneNormals == 0)` branch.
+        if seed_yz.shape[0] == 0:
+            seed_yz = seeds_module.generate_ideal_spots_friedel_mixed(
+                ys=ys, zs=zs, ttheta_deg=ttheta, eta_deg=seed_eta,
+                omega_deg=seed_omega,
+                ring_nr=seed_ring_nr, ring_rad=ring_rad, lsd=p.Distance,
+                rsample=p.Rsample, hbeam=p.Hbeam,
+                step_size_pos=p.StepsizePos,
+                ome_tol=p.MarginOme, radial_tol=p.MarginRadial,
+                eta_tol_um=p.MarginEta,
+                obs_spots=ctx.obs, device=ctx.device, dtype=ctx.dtype,
+            )
     elif p.UseFriedelPairs == 2:
         seed_yz = seeds_module.generate_ideal_spots_friedel_mixed(
             ys=ys, zs=zs, ttheta_deg=ttheta, eta_deg=seed_eta, omega_deg=seed_omega,
@@ -315,7 +331,13 @@ def process_seed(
 
     # 3. Single batched forward + match across all candidate tuples.
     theor, valid = ctx.adapter.simulate(R_all, pos_all, lattice=None)
-    ref_rad = torch.full((N,), ring_rad, device=ctx.device, dtype=ctx.dtype)
+    # Match-time radial check (C IndexerOMP.c:1797 + 502): the comparator is
+    # |seed_obs[col 3] - cand_obs[col 3]| < MarginRad, so `ref_rad` must be
+    # the *seed's* observed radial offset, NOT the full ring radius from
+    # paramstest (the latter is only correct for friedel-pair seed search).
+    # Using `ring_rad` here breaks matching: full ring radii (~10^5 um)
+    # never come within MarginRad of obs col 3 (~10^2 um).
+    ref_rad = torch.full((N,), seed_ring_rad, device=ctx.device, dtype=ctx.dtype)
     result = matching.compare_spots(
         theor=theor, valid=valid, obs=ctx.obs,
         bin_data=ctx.bin_data, bin_ndata=ctx.bin_ndata,
@@ -343,17 +365,20 @@ def process_seed(
             theor[idx, :, 9].long().unsqueeze(-1) == ctx.rings_to_reject
         ).any(dim=-1)
         n_t_frac = int((valid[idx] & ~in_reject).sum().item())
-    # Per-theor-spot (obs_id, delta_omega) pairs for the winning tuple.
-    # Unmatched theor spots have (0, 0). Mirrors the AllGrainSpots layout
-    # IndexerOMP.c writes to IndexBestFull.bin (line 1635-1640).
-    obs_ids_for_best = result.matched_obs_id[idx]              # (T,) int64
-    delta_for_best = result.delta_omega[idx]                   # (T,) float
-    matched_mask = result.matched[idx]                          # (T,) bool
-    pairs = torch.zeros(
-        (theor.shape[1], 2), device=ctx.device, dtype=ctx.dtype
+    # Compact (matched-only) layout — mirrors C IndexerOMP.c::WriteBestMatchBin
+    # (line 1635-1640): C writes ONE row per MATCHED theor spot, not per
+    # theor spot with zeros for unmatched. Downstream consumers
+    # (midas-fit-grain) read the first n_observed pairs and expect every
+    # one to carry a valid spot ID; the older `(T, 2)` layout interleaved
+    # zeros for unmatched theor spots and broke the refiner.
+    obs_ids_for_best = result.matched_obs_id[idx]
+    delta_for_best = result.delta_omega[idx]
+    matched_mask = result.matched[idx]
+    pairs = torch.stack(
+        [obs_ids_for_best[matched_mask].to(ctx.dtype),
+         delta_for_best[matched_mask].to(ctx.dtype)],
+        dim=-1,
     )
-    pairs[matched_mask, 0] = obs_ids_for_best[matched_mask].to(ctx.dtype)
-    pairs[matched_mask, 1] = delta_for_best[matched_mask].to(ctx.dtype)
 
     return SeedResult(
         spot_id=spot_id,
@@ -638,9 +663,22 @@ def _setup_group_cpu(
                 ys=ys, zs=zs, ttheta_deg=ttheta, eta_deg=seed_eta, omega_deg=seed_omega,
                 ring_nr=seed_ring_nr, ring_rad=ring_rad,
                 rsample=p.Rsample, hbeam=p.Hbeam,
-                ome_tol=p.MarginOme, radius_tol=p.MarginRad,
+                ome_tol=p.MarginOme, radius_tol=p.MarginRadial,
                 obs_spots=ctx.obs, device=cpu, dtype=ctx.dtype,
             )
+            # C parity: friedel-mixed fallback when no obs partner found
+            # (matches IndexerOMP.c:1815-1822).
+            if seed_yz.shape[0] == 0:
+                seed_yz = seeds_module.generate_ideal_spots_friedel_mixed(
+                    ys=ys, zs=zs, ttheta_deg=ttheta, eta_deg=seed_eta,
+                    omega_deg=seed_omega,
+                    ring_nr=seed_ring_nr, ring_rad=ring_rad, lsd=p.Distance,
+                    rsample=p.Rsample, hbeam=p.Hbeam,
+                    step_size_pos=p.StepsizePos,
+                    ome_tol=p.MarginOme, radial_tol=p.MarginRadial,
+                    eta_tol_um=p.MarginEta,
+                    obs_spots=ctx.obs, device=cpu, dtype=ctx.dtype,
+                )
         elif p.UseFriedelPairs == 2:
             seed_yz = seeds_module.generate_ideal_spots_friedel_mixed(
                 ys=ys, zs=zs, ttheta_deg=ttheta, eta_deg=seed_eta, omega_deg=seed_omega,
@@ -698,7 +736,9 @@ def _setup_group_cpu(
         R_chunks_cpu.append(local_R_cat)
         pos_chunks_cpu.append(local_pos_cat)
         ref_rad_chunks_cpu.append(
-            torch.full((n_local,), ring_rad, device=cpu, dtype=ctx.dtype)
+            # See note above (~line 318): ref_rad is the seed's obs col 3
+            # for radial check parity with C IndexerOMP.c:1797.
+            torch.full((n_local,), seed_ring_rad, device=cpu, dtype=ctx.dtype)
         )
         seed_meta.append({
             "sid": sid, "valid": True,
@@ -842,10 +882,13 @@ def _compute_group_gpu(
         if not seed_has_match[valid_idx]:
             valid_idx += 1
             continue
-        pairs = torch.zeros((T, 2), dtype=ctx.dtype)
+        # Compact (matched-only) layout — see note in `process_seed`.
         mm = best_match_mask[valid_idx]
-        pairs[mm, 0] = best_obs_id[valid_idx][mm].to(ctx.dtype)
-        pairs[mm, 1] = best_delta[valid_idx][mm].to(ctx.dtype)
+        pairs = torch.stack(
+            [best_obs_id[valid_idx][mm].to(ctx.dtype),
+             best_delta[valid_idx][mm].to(ctx.dtype)],
+            dim=-1,
+        )
         seeds_out.append(SeedResult(
             spot_id=m["sid"],
             best_or_mat=best_R[valid_idx].clone(),
@@ -979,10 +1022,13 @@ def _compute_group_gpu_launch(ctx: IndexerContext, setup: dict):
                 # early return.
                 valid_idx += 1
                 continue
-            pairs = torch.zeros((T, 2), dtype=ctx.dtype)
+            # Compact (matched-only) layout — see note in `process_seed`.
             mm = best_match_mask[valid_idx]
-            pairs[mm, 0] = best_obs_id[valid_idx][mm].to(ctx.dtype)
-            pairs[mm, 1] = best_delta[valid_idx][mm].to(ctx.dtype)
+            pairs = torch.stack(
+                [best_obs_id[valid_idx][mm].to(ctx.dtype),
+                 best_delta[valid_idx][mm].to(ctx.dtype)],
+                dim=-1,
+            )
             seeds_out.append(SeedResult(
                 spot_id=m["sid"],
                 best_or_mat=best_R[valid_idx].clone(),

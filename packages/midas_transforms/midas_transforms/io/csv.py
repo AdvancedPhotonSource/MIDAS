@@ -70,10 +70,39 @@ def write_radius_csv(path: Union[str, Path], data: np.ndarray) -> None:
 
 INPUTALL_HEADER = "YLab ZLab Omega GrainRadius SpotID RingNumber Eta Ttheta"
 INPUTALL_NCOLS = 8
+INPUTALL_NCOLS_WITH_DETID = 9
 
 
 def read_inputall_csv(path: Union[str, Path]) -> np.ndarray:
-    return np.loadtxt(path, skiprows=1, dtype=np.float64).reshape(-1, INPUTALL_NCOLS)
+    """Read InputAll.csv as a (N, 8) array.
+
+    Tolerates the multi-detector pipeline's 9-col format: if the file has 9
+    columns the trailing column (DetID) is dropped here. Use
+    ``read_inputall_csv_with_detid`` to retrieve DetID alongside the spots.
+    """
+    arr = np.loadtxt(path, skiprows=1, dtype=np.float64)
+    arr = arr.reshape(-1, arr.shape[-1] if arr.ndim > 0 else 1) if arr.size else arr.reshape(0, INPUTALL_NCOLS)
+    if arr.size and arr.shape[1] == INPUTALL_NCOLS_WITH_DETID:
+        return arr[:, :INPUTALL_NCOLS]
+    if arr.size and arr.shape[1] != INPUTALL_NCOLS:
+        raise ValueError(f"InputAll.csv has {arr.shape[1]} cols, expected 8 or 9")
+    return arr.reshape(-1, INPUTALL_NCOLS)
+
+
+def read_inputall_csv_with_detid(path: Union[str, Path]) -> Tuple[np.ndarray, np.ndarray]:
+    """Read 8-col spot rows + an int32 DetID array (length N).
+
+    For an 8-col input the DetID array is filled with 1 (single-detector
+    fallback).
+    """
+    arr = np.loadtxt(path, skiprows=1, dtype=np.float64)
+    arr = arr.reshape(-1, arr.shape[-1] if arr.ndim > 0 else 1) if arr.size else arr.reshape(0, INPUTALL_NCOLS)
+    if arr.size and arr.shape[1] == INPUTALL_NCOLS_WITH_DETID:
+        return arr[:, :INPUTALL_NCOLS], arr[:, INPUTALL_NCOLS].astype(np.int32)
+    if arr.size and arr.shape[1] != INPUTALL_NCOLS:
+        raise ValueError(f"InputAll.csv has {arr.shape[1]} cols, expected 8 or 9")
+    spots = arr.reshape(-1, INPUTALL_NCOLS)
+    return spots, np.ones(spots.shape[0], dtype=np.int32)
 
 
 def write_inputall_csv(path: Union[str, Path], data: np.ndarray) -> None:
@@ -93,10 +122,19 @@ INPUTALL_EXTRA_HEADER = (
     "IntegratedIntensity RawSumIntensity FitRMSE maskTouched FitErrCode"
 )
 INPUTALL_EXTRA_NCOLS = 18
+INPUTALL_EXTRA_NCOLS_WITH_DETID = 19
 
 
 def read_inputall_extra_csv(path: Union[str, Path]) -> np.ndarray:
-    return np.loadtxt(path, skiprows=1, dtype=np.float64).reshape(-1, INPUTALL_EXTRA_NCOLS)
+    """Read InputAllExtraInfoFittingAll.csv as (N, 18). Drops trailing DetID
+    if the multi-detector pipeline appended one (col 19)."""
+    arr = np.loadtxt(path, skiprows=1, dtype=np.float64)
+    arr = arr.reshape(-1, arr.shape[-1] if arr.ndim > 0 else 1) if arr.size else arr.reshape(0, INPUTALL_EXTRA_NCOLS)
+    if arr.size and arr.shape[1] == INPUTALL_EXTRA_NCOLS_WITH_DETID:
+        return arr[:, :INPUTALL_EXTRA_NCOLS]
+    if arr.size and arr.shape[1] != INPUTALL_EXTRA_NCOLS:
+        raise ValueError(f"InputAllExtra has {arr.shape[1]} cols, expected 18 or 19")
+    return arr.reshape(-1, INPUTALL_EXTRA_NCOLS)
 
 
 def write_inputall_extra_csv(path: Union[str, Path], data: np.ndarray) -> None:

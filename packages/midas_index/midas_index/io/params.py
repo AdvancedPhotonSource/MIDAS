@@ -28,6 +28,7 @@ _FLOAT_KEYS: dict[str, str] = {
     "Rsample": "Rsample",
     "Hbeam": "Hbeam",
     "StepsizePos": "StepsizePos",
+    "StepSizePos": "StepsizePos",     # alias used by midas-fit-setup writer
     "StepsizeOrient": "StepsizeOrient",
     "StepSizeOrient": "StepsizeOrient",
     "MarginOme": "MarginOme",
@@ -115,6 +116,46 @@ def read_params(path: str | Path) -> IndexerParams:
                 continue
             if key == "BigDetSize":
                 # Deprecated; parsed for backward compat then ignored.
+                continue
+
+            # --- multi-detector (pinwheel) per-panel blocks ---
+            if key == "DetParams":
+                # DetParams det_id Lsd y_bc z_bc tx ty tz p0..p10
+                if len(args) >= 7:
+                    det_id = int(float(args[0]))
+                    p.DetParams[det_id] = {
+                        "lsd": float(args[1]),
+                        "y_bc": float(args[2]),
+                        "z_bc": float(args[3]),
+                        "tx": float(args[4]),
+                        "ty": float(args[5]),
+                        "tz": float(args[6]),
+                        "p_distortion": [float(v) for v in args[7:7 + 11]],
+                    }
+                continue
+            if key.startswith("RingRadii_Det"):
+                # RingRadii_Det<det_id> ring_nr radius_um
+                try:
+                    det_id = int(key[len("RingRadii_Det"):])
+                except ValueError:
+                    continue
+                if len(args) >= 2:
+                    p.RingRadiiPerDet.setdefault(det_id, {})[
+                        int(float(args[0]))
+                    ] = float(args[1])
+                continue
+            if key.startswith("EtaCoverage_Det"):
+                # EtaCoverage_Det<det_id> ring_nr eta_lo_deg eta_hi_deg
+                try:
+                    det_id = int(key[len("EtaCoverage_Det"):])
+                except ValueError:
+                    continue
+                if len(args) >= 3:
+                    p.EtaCoverage.setdefault(det_id, []).append((
+                        int(float(args[0])),
+                        float(args[1]),
+                        float(args[2]),
+                    ))
                 continue
 
             # --- scalar typed keys ---

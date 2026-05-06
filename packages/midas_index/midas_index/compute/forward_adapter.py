@@ -81,6 +81,37 @@ class IndexerForwardAdapter:
         for rn, r in params.RingRadii.items():
             self.ring_radius_lut[rn] = float(r)
 
+        # Multi-detector pinwheel: per-(ring, eta-bin) coverage mask.
+        # Built from EtaCoverage_DetN rows in paramstest. Shape:
+        # ``(max_ring + 1, n_eta_bins)`` bool. For ``not is_multi_detector``
+        # the mask is all-True (no per-panel constraints).
+        self._has_panel_coverage = bool(params.EtaCoverage)
+        if self._has_panel_coverage:
+            n_eta_bins = 3600                     # 0.1° resolution over [-180°, 180°)
+            cov = torch.zeros(
+                (max_ring, n_eta_bins),
+                device=device, dtype=torch.bool,
+            )
+            for det_id, arcs in params.EtaCoverage.items():
+                for ring_d, lo, hi in arcs:
+                    if ring_d < 0 or ring_d >= max_ring:
+                        continue
+                    # Convert eta in [-180, 180) to bin index in [0, n_eta_bins).
+                    lo_b = int(((lo + 180.0) / 360.0) * n_eta_bins)
+                    hi_b = int(((hi + 180.0) / 360.0) * n_eta_bins)
+                    lo_b = max(0, min(n_eta_bins - 1, lo_b))
+                    hi_b = max(0, min(n_eta_bins - 1, hi_b))
+                    if lo_b <= hi_b:
+                        cov[ring_d, lo_b:hi_b + 1] = True
+                    else:                          # wrapped arc; defensive
+                        cov[ring_d, lo_b:] = True
+                        cov[ring_d, :hi_b + 1] = True
+            self.coverage_mask = cov               # (max_ring, n_eta_bins) bool
+            self.cov_n_eta_bins = n_eta_bins
+        else:
+            self.coverage_mask = None
+            self.cov_n_eta_bins = 0
+
         # OmegaRanges + BoxSizes for gating
         if params.OmegaRanges:
             self.omega_ranges = torch.tensor(params.OmegaRanges, device=device, dtype=dtype)
@@ -168,6 +199,26 @@ class IndexerForwardAdapter:
         # CalcSpotPosition: yl = -sin(eta)*R, zl = cos(eta)*R
         yl_no_disp = -torch.sin(eta_rad) * ring_radius_b
         zl_no_disp = torch.cos(eta_rad) * ring_radius_b
+
+        # Multi-detector η coverage mask: a predicted spot is "expected
+        # to be observable" only if its (ring, η) pair lies inside at
+        # least one panel's coverage. Spots that miss every panel are
+        # masked out of ``valid`` so they don't pull down completeness.
+        # This is the per-panel equivalent of the C OmegaRange + BoxSize
+        # gating below (which is geometry-agnostic).
+        if self._has_panel_coverage and self.coverage_mask is not None:
+            n_eta_bins = self.cov_n_eta_bins
+            # Eta in [-180, 180) → bin index.
+            eta_b = ((eta_deg + 180.0) / 360.0 * n_eta_bins).long()
+            eta_b = eta_b.clamp(0, n_eta_bins - 1)
+            ring_long = ring_nr_b.long().clamp_min(0)
+            ring_long = torch.minimum(
+                ring_long,
+                torch.tensor(self.coverage_mask.shape[0] - 1,
+                             device=device, dtype=torch.long),
+            )
+            covered = self.coverage_mask[ring_long, eta_b]   # (N, 2M) bool
+            valid = valid & covered
 
         # OmegaRange + BoxSize gating (matches CalcDiffrSpots_Furnace logic).
         if self.omega_ranges is not None:

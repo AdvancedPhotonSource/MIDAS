@@ -918,6 +918,78 @@ class HEDMForwardModel(nn.Module):
         ])
         return Rz @ Ry @ Rx
 
+    def _apply_ff_panel_tilt(
+        self, ydet: torch.Tensor, zdet: torch.Tensor, Lsd_val, d_idx: int = 0,
+    ) -> "tuple[torch.Tensor, torch.Tensor]":
+        """Inverse of peakfit's tilt-aware compute_rt_eta for the FF panel
+        convention.
+
+        Forward (peakfit):
+            (y_pix, z_pix) → Yc = -(y_pix-yBC)*px, Zc = (z_pix-zBC)*px
+                          → ABCPr = TRs @ (0, Yc, Zc)
+                          → X     = Lsd + ABCPr[0]
+                          → (Y_proj, Z_proj) = (ABCPr[1], ABCPr[2]) * Lsd / X
+
+        Inverse (this function):
+            Given (ydet, zdet) = (Y_proj, Z_proj) lab coordinates at the
+            Lsd plane, return (Yc, Zc) such that the forward path above
+            reproduces them. Reduces to (ydet, zdet) when tilts are zero.
+
+        Used by ``multi_mode='panel'`` with non-zero tilts. The NF
+        ``_apply_nf_tilt`` ray-plane intersection diverges from the FF
+        convention at large tilt angles (e.g. pinwheel tx ≈ 90°), so
+        FF callers route here.
+        """
+        if not self._has_tilts and not self.tilts.requires_grad:
+            return ydet, zdet
+        dtype = ydet.dtype
+        # Build the FF rotation Rx*Ry*Rz that peakfit's compute_rt_eta uses.
+        d2r = math.pi / 180.0
+        t = self.tilts[d_idx].to(dtype) * d2r
+        cx, sx = torch.cos(t[0]), torch.sin(t[0])
+        cy, sy = torch.cos(t[1]), torch.sin(t[1])
+        cz, sz = torch.cos(t[2]), torch.sin(t[2])
+        zero = torch.zeros((), dtype=dtype, device=t.device)
+        one  = torch.ones((),  dtype=dtype, device=t.device)
+        Rx = torch.stack([
+            torch.stack([one,  zero, zero]),
+            torch.stack([zero, cx,  -sx]),
+            torch.stack([zero, sx,   cx]),
+        ])
+        Ry = torch.stack([
+            torch.stack([cy,  zero, sy]),
+            torch.stack([zero, one, zero]),
+            torch.stack([-sy, zero, cy]),
+        ])
+        Rz = torch.stack([
+            torch.stack([cz, -sz, zero]),
+            torch.stack([sz,  cz, zero]),
+            torch.stack([zero, zero, one]),
+        ])
+        TRs = Rx @ (Ry @ Rz)
+
+        # Per-spot 2×2 linear solve for (Yc, Zc) such that
+        #   (TRs[1,1] - ydet*α)*Yc + (TRs[1,2] - ydet*β)*Zc = ydet
+        #   (TRs[2,1] - zdet*α)*Yc + (TRs[2,2] - zdet*β)*Zc = zdet
+        # with α = TRs[0,1]/Lsd, β = TRs[0,2]/Lsd.
+        Lsd_t = Lsd_val if torch.is_tensor(Lsd_val) else torch.tensor(
+            Lsd_val, dtype=dtype, device=ydet.device,
+        )
+        alpha = TRs[0, 1] / Lsd_t
+        beta  = TRs[0, 2] / Lsd_t
+        M11 = TRs[1, 1] - ydet * alpha
+        M12 = TRs[1, 2] - ydet * beta
+        M21 = TRs[2, 1] - zdet * alpha
+        M22 = TRs[2, 2] - zdet * beta
+        det = M11 * M22 - M12 * M21
+        safe_det = torch.where(
+            torch.abs(det) < self.epsilon,
+            torch.full_like(det, self.epsilon), det,
+        )
+        Yc = (ydet * M22 - zdet * M12) / safe_det
+        Zc = (M11 * zdet - M21 * ydet) / safe_det
+        return Yc, Zc
+
     def _apply_nf_tilt(self, ydet: torch.Tensor, zdet: torch.Tensor,
                         Lsd_val, d_idx: int = 0) -> "tuple[torch.Tensor, torch.Tensor]":
         """Apply the per-detector tilt correction to lab-frame (ydet, zdet).
@@ -1072,10 +1144,20 @@ class HEDMForwardModel(nn.Module):
             Lsd_list = self._Lsd_eff.to(dtype)
             out_y = []
             out_z = []
+            # FF multi-panel mode uses the inverse of peakfit's
+            # tilt-aware compute_rt_eta (small-tilt agreement with the
+            # NF ray-plane intersection, but the latter diverges for
+            # pinwheel-scale tilts). NF mode keeps the ray-plane path.
+            ff_panel = self.flip_y and self.multi_mode == "panel" and self.apply_tilts
             for d in range(self.n_distances):
-                yd, zd = self._apply_nf_tilt(
-                    ydet_d[d], zdet_d[d], Lsd_list[d], d_idx=d
-                )
+                if ff_panel:
+                    yd, zd = self._apply_ff_panel_tilt(
+                        ydet_d[d], zdet_d[d], Lsd_list[d], d_idx=d
+                    )
+                else:
+                    yd, zd = self._apply_nf_tilt(
+                        ydet_d[d], zdet_d[d], Lsd_list[d], d_idx=d
+                    )
                 out_y.append(yd)
                 out_z.append(zd)
             ydet_d = torch.stack(out_y, dim=0)

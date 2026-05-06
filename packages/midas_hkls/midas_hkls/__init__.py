@@ -25,6 +25,7 @@ from .form_factors import (
 )
 from .hkl_gen import Reflection, generate_hkls, reflections_to_dataframe
 from .lattice import Lattice
+from .nf_hkls import emit_nf_hkls_csv, write_nf_hkls_csv
 from .space_group import SpaceGroup, list_space_groups
 from .symops import SymOp
 
@@ -41,11 +42,13 @@ __all__ = [
     "U_to_B",
     "available_elements",
     "coefficients",
+    "emit_nf_hkls_csv",
     "form_factor",
     "form_factor_batch",
     "generate_hkls",
     "list_space_groups",
     "reflections_to_dataframe",
+    "write_nf_hkls_csv",
 ]
 
 

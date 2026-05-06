@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midas-fit-grain"
+version = "0.1.0"
+description = "PyTorch single/multi-grain refiner (drop-in replacement for FitPosOrStrainsOMP / FitPosOrStrainsGPU)"
+readme = "README.md"
+license = "BSD-3-Clause"
+requires-python = ">=3.9"
+authors = [
+    {name = "Hemant Sharma", email = "hsharma@anl.gov"},
+]
+keywords = [
+    "MIDAS", "HEDM", "grain-refinement", "PyTorch", "far-field",
+    "diffraction", "crystallography", "polycrystal",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy>=1.22",
+    "torch>=2.0",
+    "scipy>=1.10",
+    "midas-diffract>=0.1.0",
+    "midas-params>=0.3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov"]
+
+[project.urls]
+Homepage = "https://github.com/marinerhemant/MIDAS"
+Documentation = "https://github.com/marinerhemant/MIDAS/tree/master/packages/midas_fit_grain"
+Issues = "https://github.com/marinerhemant/MIDAS/issues"
+
+[project.scripts]
+midas-fit-grain = "midas_fit_grain.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["midas_fit_grain*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: full-pipeline regression tests (require reference dataset)",
+    "gpu: tests that require CUDA",
+    "mps: tests that require Apple MPS",
+    "parity: tests that compare against the C reference (FitPosOrStrainsOMP)",
+]

@@ -506,13 +506,17 @@ def _calc_omega_solutions(
                     else:
                         omegas.append(ome_b * RAD2DEG)
                     n_sol += 1
-    # Compute etas via RotateAroundZ then atan2(-y, z)
+    # Compute etas via RotateAroundZ then atan2(-y_rot, z). Mirrors C
+    # `RotateAroundZ` + `CalcEtaAngle(gw[1], gw[2])` from CalcDiffractionSpots.c
+    # — gw[1] is the **Y** component (sin*x + cos*y), NOT the X (cos*x - sin*y).
+    # Earlier versions used gw1 (X), which produced wrong eta and silently
+    # broke `generate_ideal_spots_friedel_mixed` for seeds whose obs friedel
+    # partner was searched by (omega_fp, eta_fp).
     for ome in omegas:
         cz, sz = math.cos(ome * DEG2RAD), math.sin(ome * DEG2RAD)
-        # RotateAroundZ([x,y,z], ome): (cz*x - sz*y, sz*x + cz*y, z)
-        gw1 = cz * x - sz * y
-        gw2 = sz * x + cz * y
-        eta = math.atan2(-gw1, z) * RAD2DEG
+        gw_x = cz * x - sz * y
+        gw_y = sz * x + cz * y
+        eta = math.atan2(-gw_y, z) * RAD2DEG
         etas.append(eta)
     return omegas, etas, n_sol
 

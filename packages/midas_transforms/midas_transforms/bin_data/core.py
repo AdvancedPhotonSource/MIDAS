@@ -354,7 +354,9 @@ def bin_data(
 
     if spots_inputall is None:
         ipath = inputall_csv if inputall_csv is not None else rf / "InputAll.csv"
-        spots_inputall = csv_io.read_inputall_csv(ipath)
+        spots_inputall, det_ids_in = csv_io.read_inputall_csv_with_detid(ipath)
+    else:
+        det_ids_in = np.ones(spots_inputall.shape[0], dtype=np.int32)
     if extra_inputall is None:
         ipath = inputall_extra_csv if inputall_extra_csv is not None else rf / "InputAllExtraInfoFittingAll.csv"
         extra_inputall = csv_io.read_inputall_extra_csv(ipath)
@@ -374,13 +376,35 @@ def bin_data(
     spots_t = torch.from_numpy(spots_inputall.astype(np.float64)).to(device=dev, dtype=dt)
     extra_t = torch.from_numpy(extra_inputall.astype(np.float64)).to(device=dev, dtype=dt)
 
-    # Compute Spots.bin layout (cols 0-7 + RadiusDistIdeal).
+    # Compute Spots.bin layout (cols 0-7 + RadiusDistIdeal). For multi-det
+    # runs each spot uses its own panel's ring radius (from RingRadii_DetN
+    # blocks). Single-det runs fall through with one global table.
     ring_radii = _build_ring_radii(paramstest).to(device=dev, dtype=dt)
-    # On the byte-exact CPU path, replicate the C compiler's FMA-fused
-    # ``y*y + z*z`` (clang -O3 emits a fused-multiply-add on default
-    # contraction). Without FMA, plain ``y*y + z*z`` rounds twice and
-    # differs by 1 ULP in ~1% of spots from the C output.
-    if dev.type == "cpu" and dt == torch.float64:
+    has_per_det = bool(paramstest.RingRadiiPerDet)
+    if has_per_det:
+        # Per-spot ideal radius: lookup by (det_id, ring_nr). Start at NaN
+        # so we can detect spots whose panel/ring isn't in the per-det map.
+        ring_np = spots_inputall[:, 5].astype(np.int64)
+        ideal_per_spot = np.full(spots_inputall.shape[0], np.nan, dtype=np.float64)
+        for det_id, table in paramstest.RingRadiiPerDet.items():
+            mask = det_ids_in == det_id
+            if not mask.any():
+                continue
+            for rn, rad in table.items():
+                ideal_per_spot[mask & (ring_np == rn)] = rad
+        # Fall back to the global ring_radii for any unmapped spot.
+        unfilled = np.isnan(ideal_per_spot)
+        if unfilled.any():
+            for r, rad in zip(paramstest.RingNumbers, paramstest.RingRadii):
+                if 0 <= r < 500:
+                    ideal_per_spot[unfilled & (ring_np == r)] = rad
+            ideal_per_spot[np.isnan(ideal_per_spot)] = 0.0
+        yl_np = spots_inputall[:, 0].astype(np.float64)
+        zl_np = spots_inputall[:, 1].astype(np.float64)
+        rad_dist_np = np.sqrt(yl_np * yl_np + zl_np * zl_np) - ideal_per_spot
+        rad_dist = torch.from_numpy(rad_dist_np).to(device=dev, dtype=dt)
+    elif dev.type == "cpu" and dt == torch.float64:
+        # Byte-exact C-parity path (single-detector legacy).
         yl_np = spots_inputall[:, 0].astype(np.float64)
         zl_np = spots_inputall[:, 1].astype(np.float64)
         ring_np = spots_inputall[:, 5].astype(np.int64)
@@ -407,6 +431,10 @@ def bin_data(
     if write:
         bio.write_spots_bin(out_dir / "Spots.bin", spots_out.detach().cpu().numpy().astype(np.float64))
         bio.write_extrainfo_bin(out_dir / "ExtraInfo.bin", extra_out.detach().cpu().numpy().astype(np.float64))
+        # Multi-detector side-car: int32 DetID per spot row, in the same order
+        # as Spots.bin. Always emitted (single-det runs see all 1s) so the
+        # downstream torch tools can rely on its presence.
+        np.asarray(det_ids_in, dtype=np.int32).tofile(out_dir / "Spots_det.bin")
 
     if paramstest.NoSaveAll == 1:
         return BinDataResult(

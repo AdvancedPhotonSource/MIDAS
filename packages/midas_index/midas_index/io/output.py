@@ -53,19 +53,27 @@ def open_output_files(
     truncated to their full size (`ftruncate` zero-fills). For later
     blocks we open existing files for pwrite.
 
+    When ``MIDAS_INDEX_PREALLOCATED=1`` is set in the environment,
+    no shard truncates or ftruncates — the caller has pre-allocated
+    the output files (used for safe multi-process / multi-GPU shard
+    runs where one shard's late-finishing ``O_TRUNC`` would otherwise
+    wipe another shard's already-written data).
+
     Returns raw file descriptors (int) suitable for `os.pwrite`.
     """
     folder = Path(output_folder)
     folder.mkdir(parents=True, exist_ok=True)
 
+    preallocated = os.environ.get("MIDAS_INDEX_PREALLOCATED", "0") in ("1", "true", "yes")
+
     flags = os.O_CREAT | os.O_WRONLY
-    if block_nr == 0:
+    if block_nr == 0 and not preallocated:
         flags |= os.O_TRUNC
 
     fd_best = os.open(folder / "IndexBest.bin", flags, 0o600)
     fd_full = os.open(folder / "IndexBestFull.bin", flags, 0o600)
 
-    if block_nr == 0:
+    if block_nr == 0 and not preallocated:
         os.ftruncate(fd_best, n_total_seeds * INDEX_BEST_RECORD_BYTES)
         os.ftruncate(fd_full, n_total_seeds * INDEX_BEST_FULL_RECORD_BYTES)
 

@@ -1,0 +1,41 @@
+1778032979.188388 2026-05-05 21:02:59 MainProcess-7055 MainThread-8351682752 parsl.dataflow.dflow:96 __init__ INFO: Starting DataFlowKernel with config
+Config(
+    app_cache=True, 
+    checkpoint_files=None, 
+    checkpoint_mode=None, 
+    checkpoint_period=None, 
+    dependency_resolver=None, 
+    executors=(ThreadPoolExecutor(
+        label='threads', 
+        max_threads=1, 
+        storage_access=None, 
+        thread_name_prefix='', 
+        working_dir=None
+    ),), 
+    exit_mode='cleanup', 
+    garbage_collect=True, 
+    initialize_logging=True, 
+    internal_tasks_max_threads=1, 
+    max_idletime=120.0, 
+    monitoring=None, 
+    project_name=None, 
+    retries=0, 
+    retry_handler=None, 
+    run_dir='runinfo', 
+    std_autopath=None, 
+    strategy='simple', 
+    strategy_period=5, 
+    usage_tracking=False
+)
+1778032979.188530 2026-05-05 21:02:59 MainProcess-7055 MainThread-8351682752 parsl.dataflow.dflow:98 __init__ INFO: Parsl version: 2025.06.09
+1778032979.188591 2026-05-05 21:02:59 MainProcess-7055 MainThread-8351682752 parsl.usage_tracking.usage:119 __init__ DEBUG: Tracking level: False
+1778032979.188635 2026-05-05 21:02:59 MainProcess-7055 MainThread-8351682752 parsl.dataflow.dflow:123 __init__ INFO: Run id is: cbfbdb8a-1ab8-4998-a9f2-95cab60bdfd4
+1778032979.223553 2026-05-05 21:02:59 MainProcess-7055 MainThread-8351682752 parsl.dataflow.dflow:130 __init__ DEBUG: Considering candidate for workflow name: /Users/hsharma/miniconda3/envs/midas_env/lib/python3.12/site-packages/parsl/dataflow/dflow.py
+1778032979.223636 2026-05-05 21:02:59 MainProcess-7055 MainThread-8351682752 parsl.dataflow.dflow:130 __init__ DEBUG: Considering candidate for workflow name: /Users/hsharma/miniconda3/envs/midas_env/lib/python3.12/site-packages/parsl/dataflow/dflow.py
+1778032979.223667 2026-05-05 21:02:59 MainProcess-7055 MainThread-8351682752 parsl.dataflow.dflow:130 __init__ DEBUG: Considering candidate for workflow name: /Users/hsharma/opt/MIDAS/packages/midas_ff_pipeline/midas_ff_pipeline/dispatch.py
+1778032979.223694 2026-05-05 21:02:59 MainProcess-7055 MainThread-8351682752 parsl.dataflow.dflow:136 __init__ DEBUG: Using dispatch.py as workflow name
+1778032979.223820 2026-05-05 21:02:59 MainProcess-7055 MainThread-8351682752 parsl.dataflow.memoization:169 __init__ INFO: App caching initialized
+1778032979.223856 2026-05-05 21:02:59 MainProcess-7055 MainThread-8351682752 parsl.jobs.strategy:145 __init__ DEBUG: Scaling strategy: simple
+1778032979.223974 2026-05-05 21:02:59 MainProcess-7055 JobStatusPoller-Timer-Thread-6058267024-6162657280 parsl.jobs.strategy:184 _general_strategy DEBUG: general strategy starting with strategy_type simple for 0 executors
+1778032979.224006 2026-05-05 21:02:59 MainProcess-7055 JobStatusPoller-Timer-Thread-6058267024-6162657280 parsl.process_loggers:27 wrapped DEBUG: Normal ending for _general_strategy on thread JobStatusPoller-Timer-Thread-6058267024
+1778032979.535494 2026-05-05 21:02:59 MainProcess-7055 MainThread-8351682752 parsl.dataflow.dflow:1147 atexit_cleanup WARNING: Python is exiting with a DFK still running. You should call parsl.dfk().cleanup() before exiting to release any resources

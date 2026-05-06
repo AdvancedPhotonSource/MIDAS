@@ -9,9 +9,16 @@ description = "Pure-Python crystallography, CIF I/O, and differentiable structur
 readme = "README.md"
 license = { text = "BSD-3-Clause" }
 authors = [
-    { name = "MIDAS contributors" },
+    {name = "Hemant Sharma", email = "hsharma@anl.gov"},
 ]
 requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Physics",
+]
 dependencies = [
     "numpy>=1.22",
 ]

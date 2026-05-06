@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midas-ff-pipeline"
+version = "0.1.0"
+description = "End-to-end pure-Python FF-HEDM workflow orchestrator (1-N detectors)"
+readme = "README.md"
+license = "BSD-3-Clause"
+requires-python = ">=3.9"
+authors = [
+    {name = "Hemant Sharma", email = "hsharma@anl.gov"},
+]
+keywords = [
+    "MIDAS", "HEDM", "FF-HEDM", "diffraction", "pipeline",
+    "PyTorch", "multi-detector", "crystallography", "polycrystal",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy>=1.22",
+    "torch>=2.0",
+    "zarr>=2.14,<3",
+    "h5py>=3.7",
+    "tifffile",
+    "pandas>=1.5",
+    # Sibling MIDAS packages.
+    "midas-hkls>=0.2.0",
+    "midas-peakfit>=0.2.0",
+    "midas-transforms>=0.1.1",
+    "midas-index>=0.3.0",
+    "midas-fit-grain>=0.1.0a0",
+    "midas-process-grains>=0.1.0",
+    "midas-diffract>=0.1.0",
+    "midas-parsl-configs>=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov", "matplotlib", "ipykernel"]
+notebook = ["matplotlib", "ipykernel", "jupyter"]
+
+[project.scripts]
+midas-ff-pipeline = "midas_ff_pipeline.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/marinerhemant/MIDAS"
+Documentation = "https://github.com/marinerhemant/MIDAS"
+Issues = "https://github.com/marinerhemant/MIDAS/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["midas_ff_pipeline*"]
+
+[tool.setuptools.package-data]
+midas_ff_pipeline = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"

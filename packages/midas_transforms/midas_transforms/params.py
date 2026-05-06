@@ -84,6 +84,13 @@ class ParamsTest:
     RingRadii: List[float] = field(default_factory=list)
     OmegaRanges: List[Tuple[float, float]] = field(default_factory=list)
     BoxSizes: List[Tuple[float, float, float, float]] = field(default_factory=list)
+    # Multi-detector additions (no-op for single-detector runs):
+    #   DetParams[det_id] = {"lsd","y_bc","z_bc","tx","ty","tz","p_distortion"}
+    #   RingRadiiPerDet[det_id][ring_nr] = radius
+    # Populated when the merged paramstest carries DetParams + RingRadii_DetN
+    # rows from midas_ff_pipeline's cross_det_merge stage.
+    DetParams: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    RingRadiiPerDet: Dict[int, Dict[int, float]] = field(default_factory=dict)
     LatticeConstant: Tuple[float, float, float, float, float, float] = (
         0.0, 0.0, 0.0, 90.0, 90.0, 90.0,
     )
@@ -150,6 +157,27 @@ def read_paramstest(path: Union[str, Path]) -> ParamsTest:
                 p.RingNumbers.append(int(args[0]))
             elif key == "RingRadii":
                 p.RingRadii.append(float(args[0]))
+            elif key == "DetParams":
+                # DetParams det_id Lsd y_bc z_bc tx ty tz p0..p10
+                if len(args) >= 7:
+                    det_id = int(float(args[0]))
+                    p.DetParams[det_id] = {
+                        "lsd": float(args[1]),
+                        "y_bc": float(args[2]),
+                        "z_bc": float(args[3]),
+                        "tx": float(args[4]),
+                        "ty": float(args[5]),
+                        "tz": float(args[6]),
+                        "p_distortion": [float(v) for v in args[7:7 + 11]],
+                    }
+            elif key.startswith("RingRadii_Det"):
+                # RingRadii_Det<det_id> ring_nr radius
+                try:
+                    det_id = int(key[len("RingRadii_Det"):])
+                except ValueError:
+                    continue
+                if len(args) >= 2:
+                    p.RingRadiiPerDet.setdefault(det_id, {})[int(float(args[0]))] = float(args[1])
             elif key == "OmegaRange":
                 p.OmegaRanges.append((float(args[0]), float(args[1])))
             elif key == "BoxSize":

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midas-parsl-configs"
+version = "0.1.0"
+description = "Bundled + user-extensible Parsl configs for MIDAS pipelines."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "MIDAS authors" }]
+license = { text = "BSD-3-Clause" }
+classifiers = [
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "parsl",
+]
+
+[project.scripts]
+midas-parsl-configs = "midas_parsl_configs.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["midas_parsl_configs*"]

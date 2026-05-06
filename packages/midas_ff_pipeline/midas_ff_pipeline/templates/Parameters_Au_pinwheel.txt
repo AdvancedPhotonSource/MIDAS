@@ -1,0 +1,113 @@
+###############################################################################
+#  MIDAS FF-HEDM — Au pinwheel (4-detector) parameter template
+#
+#  Same crystal / scan / threshold setup as FF_HEDM/Example/Parameters.txt,
+#  but with hydra-style geometry that admits a real 4-panel pinwheel:
+#
+#    Lsd  = 3300000 µm   (~3.3 m, matches hydra)
+#    BC   = 2300, 2150 px (off-corner; each panel sees one quadrant of
+#                         the diffraction pattern)
+#    NrPixels = 2048
+#    px       = 200 µm
+#
+#  The multi-detector generator (testing.generate_multidet_synthetic_dataset)
+#  reads this file, then writes one per-detector params file with the
+#  panel-specific tx (~90° apart) + small ty/tz/Lsd jitter, and runs
+#  ForwardSimulationCompressed once per detector.
+###############################################################################
+
+# CALIBRANT / MATERIAL  -------------------------------------------------------
+LatticeConstant 4.08 4.08 4.08 90 90 90
+SpaceGroup 225
+
+# FORWARD SIMULATION ----------------------------------------------------------
+InFileName GrainsSim.csv
+OutFileName Au_pinwheel_synth
+nScans 1
+PeakIntensity 5000
+GaussWidth 1
+WriteSpots 1
+
+# DETECTOR GEOMETRY -----------------------------------------------------------
+NrPixels 2048
+px 200
+Lsd 3300000.0
+BC 2300 2150
+tx 0
+ty 0
+tz 0
+p0 0
+p1 0
+p2 0
+p3 0
+p4 0
+Wedge 0
+RhoD 2000000
+
+# BEAM / SAMPLE ---------------------------------------------------------------
+Wavelength 0.22291
+OmegaStart 180
+OmegaEnd -180
+OmegaStep -0.25
+OmegaRange -180 180
+
+# RING SELECTION (Au rings out to 9 to compensate for the smaller
+# per-panel coverage at long Lsd + off-corner BC) ----------------------------
+RingThresh 1 10
+RingThresh 2 10
+RingThresh 3 10
+RingThresh 4 10
+RingThresh 5 10
+RingThresh 6 10
+RingThresh 7 10
+RingThresh 8 10
+RingThresh 9 10
+
+# SAMPLE & BEAM GEOMETRY ------------------------------------------------------
+Vsample 10000000
+BeamThickness 200
+GlobalPosition 100
+Rsample 200
+Hbeam 200
+
+# PHASE & TIMING --------------------------------------------------------------
+NumPhases 1
+PhaseNr 1
+tInt 0.3
+tGap 0.15
+
+# IMAGE PROCESSING ------------------------------------------------------------
+ImTransOpt 0
+UpperBoundThreshold 70000
+NrFilesPerSweep 1
+
+# INDEXING PARAMETERS ---------------------------------------------------------
+OverAllRingToIndex 2
+Completeness 0.8
+MinNrSpots 3
+UseFriedelPairs 1
+StepSizeOrient 0.2
+StepSizePos 100
+MinOmeSpotIDsToIndex -90
+MaxOmeSpotIDsToIndex 90
+MinEta 6
+
+# SPOT MATCHING TOLERANCES ----------------------------------------------------
+Width 1500
+MarginRadial 500
+MarginEta 500
+MarginOme 0.5
+MarginRadius 500
+BoxSize -1000000 1000000 -1000000 1000000
+OmeBinSize 0.1
+EtaBinSize 0.1
+
+# REFINEMENT ------------------------------------------------------------------
+MargABC 4.8
+MargABG 4.8
+
+# ADVANCED / OPTIONAL ---------------------------------------------------------
+Twins 0
+TakeGrainMax 0
+DiscModel 0
+DiscArea 2250000

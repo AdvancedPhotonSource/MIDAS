@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midas-nf-pipeline"
+version = "0.1.0a0"
+description = "Pure-Python NF-HEDM pipeline orchestrator (single + multi-resolution, multi-layer) — drop-in replacement for nf_MIDAS.py / nf_MIDAS_Multiple_Resolutions.py"
+readme = "README.md"
+license = "BSD-3-Clause"
+requires-python = ">=3.9"
+authors = [
+    {name = "Hemant Sharma", email = "hsharma@anl.gov"},
+]
+keywords = [
+    "MIDAS", "NF-HEDM", "near-field", "diffraction", "PyTorch",
+    "orientation fitting", "pipeline", "workflow",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy>=1.22",
+    "h5py>=3.0",
+    "tqdm>=4.0",
+    "midas-hkls>=0.3.0",
+    "midas-stress>=0.6.0",
+    "midas-nf-preprocess>=0.1.0",
+    "midas-nf-fitorientation>=0.3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov"]
+denoise = ["MIDAS-NF-preProc"]
+
+[project.scripts]
+midas-nf-pipeline = "midas_nf_pipeline.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/marinerhemant/MIDAS"
+Issues = "https://github.com/marinerhemant/MIDAS/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["midas_nf_pipeline*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: long-running tests",
+    "gpu: tests that require CUDA",
+    "integration: tests that exercise the full Au end-to-end pipeline",
+]

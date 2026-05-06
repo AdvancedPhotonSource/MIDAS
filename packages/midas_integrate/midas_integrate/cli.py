@@ -247,7 +247,10 @@ def server_main(argv=None) -> int:
         nonlocal stop
         stop = True
     signal.signal(signal.SIGINT, _handler)
-    signal.signal(signal.SIGTERM, _handler)
+    try:
+        signal.signal(signal.SIGTERM, _handler)
+    except (AttributeError, ValueError):
+        pass
     while not stop:
         time.sleep(0.5)
     print("shutting down...")
