@@ -7,7 +7,7 @@ name = "midas-parsl-configs"
 version = "0.1.0"
 description = "Bundled + user-extensible Parsl configs for MIDAS pipelines."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 authors = [{ name = "MIDAS authors" }]
 license = { text = "BSD-3-Clause" }
 classifiers = [
