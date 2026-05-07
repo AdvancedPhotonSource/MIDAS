@@ -50,7 +50,7 @@ if _utils_dir not in sys.path:
 
 from gui_common import (MIDASImageView, apply_theme, get_colormap,
                          AsyncWorker, LogPanel, add_shortcut, COLORMAPS,
-                         draw_lab_frame_axes)
+                         draw_lab_frame_axes, draw_caking_overlay)
 import multidet as _md
 
 try:
@@ -364,6 +364,7 @@ class FFViewer(QtWidgets.QMainWindow):
         self.dark_stem = ''
         self.dark_folder = ''
         self.dark_num = 0
+        self.dark_fn = ''          # full path set by "Dark File" dialog; preferred over reconstruction
         self.det_nr = -1
         self.sep_folder = False
 
@@ -405,6 +406,11 @@ class FFViewer(QtWidgets.QMainWindow):
         # Lab-frame axes overlay
         self.show_axes = False
 
+        # Caking overlay
+        self.show_caking = False
+        self.cake_params_per_det = {}  # {det_nr: {'R_MIN':…,'ETA_MIN':…, …}}
+        self.cake_params_file = ''
+
         # Multi-detector mode
         self.multi_mode = False
         self._det_states = [_md.DetectorState() for _ in range(4)]
@@ -429,6 +435,13 @@ class FFViewer(QtWidgets.QMainWindow):
         # HDF5
         self.hdf5_data_path = '/exchange/data'
         self.hdf5_dark_path = '/exchange/dark'
+
+        # Lock flags: set True when the user explicitly sets the path via a button
+        # or by editing the field; prevents param-file loading from overwriting them.
+        self._folder_locked = False   # set by _on_first_file
+        self._dark_locked   = False   # set by _on_dark_file
+        self._h5data_locked = False   # set by editing h5data_edit
+        self._h5dark_locked = False   # set by editing h5dark_edit
 
     # ── UI Construction ────────────────────────────────────────────
 
@@ -457,7 +470,11 @@ class FFViewer(QtWidgets.QMainWindow):
         main_layout.addLayout(tb)
 
         # ── Image View ──
-        self.image_view = MIDASImageView(self)
+        # 'br' origin mirrors the display about the vertical axis so the
+        # composite reads in the same chirality as the physical HYDRA setup
+        # (purely a display flip — data, BC and per-detector tx are unchanged,
+        # and overlays follow because draw_*_overlay branch on _origin).
+        self.image_view = MIDASImageView(self, origin='br')
         self.image_view.set_colormap(self.colormap_name)
         self.font_spin = self.image_view._font_spin
         self.image_view.fontSizeChanged.connect(self._on_font_changed)
@@ -569,6 +586,9 @@ class FFViewer(QtWidgets.QMainWindow):
             "physically expected lab-frame quadrant.")
         tb.addWidget(self.axes_check)
 
+        # Caking overlay is driven by the Plot/Clear button in the cake editor
+        # panel (HYDRA mode), not from a top-bar checkbox. C shortcut still toggles.
+
         # Detector mode selector (single vs multi-panel configurations)
         tb.addWidget(QtWidgets.QLabel("Mode:"))
         self.detector_mode_combo = QtWidgets.QComboBox()
@@ -619,7 +639,24 @@ class FFViewer(QtWidgets.QMainWindow):
         tb.addWidget(help_btn)
 
         tb.addStretch()
+
+        tb.addWidget(QtWidgets.QLabel("Font:"))
+        self.font_size_combo = QtWidgets.QComboBox()
+        self.font_size_combo.addItems(["8", "9", "10", "11", "12", "14"])
+        app = QtWidgets.QApplication.instance()
+        self.font_size_combo.setCurrentText(str(app.font().pointSize()))
+        self.font_size_combo.setFixedWidth(50)
+        self.font_size_combo.currentTextChanged.connect(self._on_font_size_changed)
+        tb.addWidget(self.font_size_combo)
+
         return tb
+
+    def _on_font_size_changed(self, size_str):
+        try:
+            size = int(size_str)
+        except ValueError:
+            return
+        self._on_font_changed(size)
 
     def _build_file_panel(self):
         grp = QtWidgets.QGroupBox("Data Source")
@@ -642,6 +679,10 @@ class FFViewer(QtWidgets.QMainWindow):
         btn_zip = QtWidgets.QPushButton("Load ZIP")
         btn_zip.clicked.connect(self._on_load_zip)
         lay.addWidget(btn_zip, 0, 3)
+
+        self.dark_label = QtWidgets.QLabel("")
+        self.dark_label.setStyleSheet("color: gray; font-size: 9pt;")
+        lay.addWidget(self.dark_label, 0, 4)
 
         lay.addWidget(QtWidgets.QLabel("File Nr"), 1, 0)
         self.file_nr_edit = QtWidgets.QLineEdit(str(self.first_file_nr))
@@ -687,7 +728,89 @@ class FFViewer(QtWidgets.QMainWindow):
         self.param_label.setStyleSheet("color: gray;")
         lay.addWidget(self.param_label, 5, 2, 1, 2)
 
+        # Cake parameter UI lives in the multi-detector panel; built lazily by
+        # _build_cake_widget() and added to that panel.
+
         return grp
+
+    def _build_cake_widget(self):
+        """Build the cake-parameter editor (Load/Save + per-GE edit rows).
+
+        Returned widget is owned by whatever layout adds it; caller is
+        responsible for placement. Only meaningful in HYDRA/multi-det mode.
+        """
+        cake_widget = QtWidgets.QWidget()
+        self._cake_widget = cake_widget
+        cl = QtWidgets.QGridLayout(cake_widget)
+        cl.setContentsMargins(0, 2, 0, 0)
+        cl.setSpacing(3)
+
+        btn_cake = QtWidgets.QPushButton("Load Cake")
+        btn_cake.setToolTip(
+            "Load cake_parameters.1ide.geN.csv; GE siblings auto-detected.")
+        btn_cake.clicked.connect(self._on_pick_cake_file)
+        cl.addWidget(btn_cake, 0, 0)
+
+        btn_save_cake = QtWidgets.QPushButton("Save Cake")
+        btn_save_cake.setToolTip(
+            "Write current cake parameters back to cake_parameters.1ide.geN.csv files.")
+        btn_save_cake.clicked.connect(self._on_save_cake_file)
+        cl.addWidget(btn_save_cake, 0, 1)
+
+        self._cake_plot_btn = QtWidgets.QPushButton("Plot")
+        self._cake_plot_btn.setToolTip(
+            "Draw / clear the caking sector overlay on the composite.\n"
+            "Keyboard shortcut: C")
+        self._cake_plot_btn.clicked.connect(self._toggle_cake_overlay)
+        cl.addWidget(self._cake_plot_btn, 0, 2)
+
+        # Pin all three buttons to identical width, sized to the longest label
+        # plus generous padding for the QPushButton frame (varies by style).
+        # We use setFixedWidth so the grid layout cannot stretch one column.
+        fm = btn_cake.fontMetrics()
+        btn_w = max(fm.horizontalAdvance(b.text())
+                    for b in (btn_cake, btn_save_cake, self._cake_plot_btn)) + 60
+        btn_cake.setFixedWidth(btn_w)
+        btn_save_cake.setFixedWidth(btn_w)
+        self._cake_plot_btn.setFixedWidth(btn_w)
+
+        self.cake_label = QtWidgets.QLabel("")
+        self.cake_label.setStyleSheet("color: gray;")
+        cl.addWidget(self.cake_label, 0, 3, 1, 4)
+
+        _hs = "color: gray; font-size: 9pt;"
+        column_labels = ["R min", "R max", "R step",
+                         "η min", "η max", "η step",
+                         "ω sum", "ω start", "ω step"]
+        cl.addWidget(QtWidgets.QLabel(""), 1, 0)
+        for col, txt in enumerate(column_labels):
+            lbl = QtWidgets.QLabel(txt)
+            lbl.setStyleSheet(_hs)
+            lbl.setAlignment(QtCore.Qt.AlignCenter)
+            cl.addWidget(lbl, 1, col + 1)
+
+        self._cake_edits = {}
+        for i, det in enumerate([1, 2, 3, 4]):
+            row = 2 + i
+            ge_lbl = QtWidgets.QLabel(f"GE{det}")
+            ge_lbl.setStyleSheet(
+                f"color: {_color_cycle_colors[i]}; font-weight: bold;")
+            cl.addWidget(ge_lbl, row, 0)
+            edits = {}
+            for col, key in enumerate(self.CAKE_KEYS):
+                e = QtWidgets.QLineEdit("")
+                e.setMinimumWidth(80)
+                e.setAlignment(QtCore.Qt.AlignRight)
+                e.setPlaceholderText("—")
+                cl.addWidget(e, row, col + 1)
+                e.textEdited.connect(
+                    lambda _txt, d=det, k=key, ed=e: self._on_cake_param_edited(d, k, ed))
+                e.editingFinished.connect(
+                    lambda d=det, k=key, ed=e: self._on_cake_param_edited(d, k, ed))
+                edits[key] = e
+            self._cake_edits[det] = edits
+
+        return cake_widget
 
     def _build_image_display_panel(self):
         """Merged Image Settings + Display panel."""
@@ -826,7 +949,7 @@ class FFViewer(QtWidgets.QMainWindow):
         self._multi_data_path_edit.setToolTip(
             "HDF5 dataset path for frame data in each detector file\n"
             "(e.g. /exchange/data). Applied to all detectors.")
-        self._multi_data_path_edit.setFixedWidth(150)
+        self._multi_data_path_edit.setMinimumWidth(260)
         self._multi_data_path_edit.editingFinished.connect(self._on_multi_paths_changed)
         path_row.addWidget(self._multi_data_path_edit)
         path_row.addSpacing(12)
@@ -835,7 +958,7 @@ class FFViewer(QtWidgets.QMainWindow):
         self._multi_dark_path_edit.setToolTip(
             "HDF5 dataset path for the dark frame in each detector file\n"
             "(e.g. /exchange/data_dark). Applied to all detectors.")
-        self._multi_dark_path_edit.setFixedWidth(150)
+        self._multi_dark_path_edit.setMinimumWidth(260)
         self._multi_dark_path_edit.editingFinished.connect(self._on_multi_paths_changed)
         path_row.addWidget(self._multi_dark_path_edit)
         path_row.addStretch()
@@ -885,12 +1008,14 @@ class FFViewer(QtWidgets.QMainWindow):
 
             r0 = grid_row      # data + dark row
             r1 = grid_row + 1  # param + status row
+            r2 = grid_row + 2  # cake row
 
             en = QtWidgets.QCheckBox(f"GE{i+1}")
             en.setChecked(True)
             en.setToolTip(f"Include detector GE{i+1} in the composite")
+            en.setStyleSheet(f"color: {_color_cycle_colors[i]}; font-weight: bold;")
             en.toggled.connect(lambda c, idx=i: self._on_det_enabled(idx, c))
-            card_grid.addWidget(en, r0, 0, 2, 1)
+            card_grid.addWidget(en, r0, 0, 3, 1)
 
             # Data row
             card_grid.addWidget(QtWidgets.QLabel("Data"), r0, 1)
@@ -927,13 +1052,27 @@ class FFViewer(QtWidgets.QMainWindow):
             card_grid.addWidget(param_btn, r1, 3)
 
             status_lbl = QtWidgets.QLabel("")
-            status_lbl.setStyleSheet("color: #888888; font-size: 9pt;")
+            status_lbl.setStyleSheet("color: #888888;")
             card_grid.addWidget(status_lbl, r1, 4, 1, 4)
 
-            grid_row += 2
+            # Cake row
+            card_grid.addWidget(QtWidgets.QLabel("Cake"), r2, 1)
+            cake_lbl = QtWidgets.QLabel("(none)")
+            cake_lbl.setStyleSheet("color: gray;")
+            card_grid.addWidget(cake_lbl, r2, 2)
+            cake_btn = QtWidgets.QPushButton("…")
+            cake_btn.setFixedWidth(28)
+            cake_btn.clicked.connect(lambda _, idx=i: self._on_pick_det_cake(idx))
+            card_grid.addWidget(cake_btn, r2, 3)
+            cake_status_lbl = QtWidgets.QLabel("")
+            cake_status_lbl.setStyleSheet("color: #888888;")
+            card_grid.addWidget(cake_status_lbl, r2, 4, 1, 4)
+
+            grid_row += 3
             self._det_widgets.append(dict(
                 enable=en, data_lbl=data_lbl, dark_lbl=dark_lbl,
-                param_lbl=param_lbl, status_lbl=status_lbl))
+                param_lbl=param_lbl, status_lbl=status_lbl,
+                cake_lbl=cake_lbl, cake_status_lbl=cake_status_lbl))
 
         outer.addLayout(card_grid)
 
@@ -956,6 +1095,10 @@ class FFViewer(QtWidgets.QMainWindow):
         save_btn.clicked.connect(self._on_save_composite)
         bottom.addWidget(save_btn)
         outer.addLayout(bottom)
+
+        # Cake parameter editor (Load/Save + per-GE fields). Only meaningful
+        # in HYDRA mode, and the multi panel itself is hidden in single mode.
+        outer.addWidget(self._build_cake_widget())
         return grp
 
     # ── Signal Wiring (reactive) ───────────────────────────────────
@@ -990,6 +1133,8 @@ class FFViewer(QtWidgets.QMainWindow):
         self.lsd_edit.editingFinished.connect(self._redraw_if_rings)
         self.tx_edit.editingFinished.connect(self._load_and_display)
         self.h5dark_edit.editingFinished.connect(self._load_and_display)
+        self.h5dark_edit.editingFinished.connect(lambda: setattr(self, '_h5dark_locked', True))
+        self.h5data_edit.editingFinished.connect(lambda: setattr(self, '_h5data_locked', True))
         self.image_view.dataStatsUpdated.connect(self._on_stats_updated)
         # Movie mode: advance frame by 1 (wraps at max)
         self.image_view.movieFrameAdvance.connect(self._movie_advance_frame)
@@ -1034,6 +1179,7 @@ class FFViewer(QtWidgets.QMainWindow):
         add_shortcut(self, 'L', lambda: self.log_check.toggle())
         add_shortcut(self, 'R', lambda: self.rings_check.toggle())
         add_shortcut(self, 'A', lambda: self.axes_check.toggle())
+        add_shortcut(self, 'C', self._toggle_cake_overlay)
         add_shortcut(self, 'Q', self.close)
 
     # ── Session Save / Load ────────────────────────────────────────
@@ -1070,6 +1216,8 @@ class FFViewer(QtWidgets.QMainWindow):
             'transpose': self.transpose_check.isChecked(),
             'show_rings': self.rings_check.isChecked(),
             'show_axes': self.axes_check.isChecked(),
+            'show_caking': self.show_caking,
+            'cake_params_file': self.cake_params_file,
             'use_dark': self.dark_check.isChecked(),
         }
         try:
@@ -1121,6 +1269,11 @@ class FFViewer(QtWidgets.QMainWindow):
         self.transpose_check.setChecked(state.get('transpose', False))
         self.rings_check.setChecked(state.get('show_rings', False))
         self.axes_check.setChecked(state.get('show_axes', False))
+        cake_f = state.get('cake_params_file', '')
+        if cake_f and os.path.exists(cake_f):
+            self._load_cake_file(cake_f)
+        if state.get('show_caking', False):
+            self._show_cake_overlay()
         self.dark_check.setChecked(state.get('use_dark', False))
 
         self.frame_spin.setValue(state.get('frame', 0))
@@ -1204,7 +1357,9 @@ class FFViewer(QtWidgets.QMainWindow):
         instr_only = getattr(self, 'instr_only_check', None) and self.instr_only_check.isChecked()
 
         # ── Files / layout ──
-        if not instr_only:
+        # Skip data-path fields if the user already chose a file via "First File"
+        # (self._folder_locked) — their choice takes priority over the param file.
+        if not instr_only and not self._folder_locked:
             folder = get_str('RawFolder', 'Folder')
             if folder:
                 self.folder = folder.rstrip('/').rstrip('\\') + '/'
@@ -1307,6 +1462,20 @@ class FFViewer(QtWidgets.QMainWindow):
         if mr is not None:
             self.temp_max_ring_rad = mr
 
+        # ── Caking params (fallback when no CSV is present) ──
+        det = getattr(self, 'det_nr', 1)
+        cp = self.cake_params_per_det.setdefault(det, {})
+        for src_key, dst_key in [('RMin', 'R_MIN'), ('RMax', 'R_MAX'),
+                                  ('RBinSize', 'R_STEP'), ('EtaMin', 'ETA_MIN'),
+                                  ('EtaMax', 'ETA_MAX'), ('EtaBinSize', 'ETA_STEP')]:
+            v = get_float(src_key)
+            if v is not None:
+                cp[dst_key] = v
+        # Auto-detect sibling cake_parameters CSV files next to the param file
+        self._autofind_cake_file(fn)
+        if hasattr(self, '_cake_edits'):
+            self._populate_cake_edits()
+
         # ── Image transforms (ImTransOpt: 1=HFlip 2=VFlip 3=Transpose, repeatable) ──
         if 'ImTransOpt' in params:
             opts = []
@@ -1328,38 +1497,40 @@ class FFViewer(QtWidgets.QMainWindow):
             self.nframes_edit.setText(str(nfs))
 
         # ── HDF5 dataset paths (dataLoc / darkLoc) ──
-        # APS GE files commonly store dark at /exchange/data_dark, not the
-        # default /exchange/dark — and the param file may explicitly point
-        # the dark to a different dataset (e.g. /exchange/data inside an
-        # external dark-only file). Strip a trailing '/' since h5py is
-        # forgiving but the comparison `dpath in f` relies on exact match.
-        dl = get_str('dataLoc')
-        if dl:
-            self.hdf5_data_path = dl.rstrip('/') or '/'
-            if hasattr(self, 'h5data_edit'):
-                self.h5data_edit.setText(self.hdf5_data_path)
-            applied.append(f"dataLoc={self.hdf5_data_path}")
-        dl = get_str('darkLoc')
-        if dl:
-            self.hdf5_dark_path = dl.rstrip('/') or '/'
-            if hasattr(self, 'h5dark_edit'):
-                self.h5dark_edit.setText(self.hdf5_dark_path)
-            applied.append(f"darkLoc={self.hdf5_dark_path}")
+        # Skipped when the user has manually edited the corresponding field
+        # (self._h5data_locked / self._h5dark_locked), so their choice takes
+        # priority. APS GE files commonly store dark at /exchange/data_dark.
+        if not self._h5data_locked:
+            dl = get_str('dataLoc')
+            if dl:
+                self.hdf5_data_path = dl.rstrip('/') or '/'
+                if hasattr(self, 'h5data_edit'):
+                    self.h5data_edit.setText(self.hdf5_data_path)
+                applied.append(f"dataLoc={self.hdf5_data_path}")
+        if not self._h5dark_locked:
+            dl = get_str('darkLoc')
+            if dl:
+                self.hdf5_dark_path = dl.rstrip('/') or '/'
+                if hasattr(self, 'h5dark_edit'):
+                    self.h5dark_edit.setText(self.hdf5_dark_path)
+                applied.append(f"darkLoc={self.hdf5_dark_path}")
 
         # ── Dark file ──
-        ds = get_str('DarkStem', 'Dark')
-        if ds:
-            if os.sep in ds or '/' in ds:
-                self.dark_folder = os.path.dirname(ds) + '/'
-                basename = os.path.basename(ds)
-                parsed = _parse_numbered_filename(basename)
-                if parsed:
-                    self.dark_stem = parsed[0]
-                    self.dark_num = parsed[1]
-            else:
-                self.dark_stem = ds
-            self.dark_check.setChecked(True)
-            applied.append(f"Dark={ds}")
+        # Skip if the user already chose a dark file via "Dark File" button.
+        if not self._dark_locked:
+            ds = get_str('DarkStem', 'Dark')
+            if ds:
+                if os.sep in ds or '/' in ds:
+                    self.dark_folder = os.path.dirname(ds) + '/'
+                    basename = os.path.basename(ds)
+                    parsed = _parse_numbered_filename(basename)
+                    if parsed:
+                        self.dark_stem = parsed[0]
+                        self.dark_num = parsed[1]
+                else:
+                    self.dark_stem = ds
+                self.dark_check.setChecked(True)
+                applied.append(f"Dark={ds}")
 
         self.param_label.setText(os.path.basename(fn))
         print(f"Param file: {fn}")
@@ -1369,6 +1540,8 @@ class FFViewer(QtWidgets.QMainWindow):
         self._load_and_display()
         if self.show_rings and self.ring_rads:
             self._draw_rings()
+        if self.show_caking and self.cake_params_per_det:
+            self._draw_caking()
 
     # ── Callbacks ──────────────────────────────────────────────────
 
@@ -1999,6 +2172,18 @@ class FFViewer(QtWidgets.QMainWindow):
             if nf:
                 bits.append(f"{nf} frames @ {s.data_loc}")
         w['status_lbl'].setText("  ".join(bits))
+        cp = self.cake_params_per_det.get(idx + 1)
+        if cp:
+            cake_bits = []
+            if 'R_MIN' in cp and 'R_MAX' in cp:
+                cake_bits.append(f"R=[{cp['R_MIN']:g},{cp['R_MAX']:g}]")
+            if 'ETA_MIN' in cp and 'ETA_MAX' in cp:
+                cake_bits.append(f"η=[{cp['ETA_MIN']:g},{cp['ETA_MAX']:g}]°")
+            if 'ETA_STEP' in cp:
+                cake_bits.append(f"step={cp['ETA_STEP']:g}°")
+            w['cake_status_lbl'].setText("  ".join(cake_bits))
+        else:
+            w['cake_status_lbl'].setText("")
 
     def _on_save_composite(self):
         """Save the most recent composite array as a TIFF."""
@@ -2034,6 +2219,7 @@ class FFViewer(QtWidgets.QMainWindow):
             return
         self.file_stem, self.first_file_nr, self.padding, self.ext = parsed
         self.folder = os.path.dirname(fn) + '/'
+        self._folder_locked = True   # user explicitly chose data path; param file won't override
         self.file_nr_edit.setText(str(self.first_file_nr))
         self.det_nr = -1
         if self.ext.startswith('ge') and len(self.ext) == 3 and self.ext[-1].isdigit():
@@ -2049,6 +2235,8 @@ class FFViewer(QtWidgets.QMainWindow):
         fn, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Dark File")
         if not fn:
             return
+        self.dark_fn = fn                           # store full path directly
+        self._dark_locked = True   # user explicitly chose dark; param file won't override
         self.dark_folder = os.path.dirname(fn) + '/'
         basename = os.path.basename(fn)
         parsed = _parse_numbered_filename(basename)
@@ -2056,6 +2244,8 @@ class FFViewer(QtWidgets.QMainWindow):
             self.dark_stem = parsed[0]
             self.dark_num = parsed[1]
         self.dark_check.setChecked(True)
+        if hasattr(self, 'dark_label'):
+            self.dark_label.setText(basename)
         print(f"Dark: {fn}")
 
     def _on_load_zip(self):
@@ -2322,6 +2512,8 @@ class FFViewer(QtWidgets.QMainWindow):
                 self._draw_rings()
             if self.show_axes:
                 self._draw_axes()
+            if self.show_caking and self.cake_params_per_det:
+                self._draw_caking()
 
         def _err(msg):
             self.frame_label.setText(f"Multi-Det error: {msg}")
@@ -2348,13 +2540,30 @@ class FFViewer(QtWidgets.QMainWindow):
             mask = read_mask(self.mask_edit.text(), self.ny, self.nz,
                              self.do_transpose, self.hflip, self.vflip)
 
-        # Dark subtraction
+        # Dark subtraction — prefer the directly stored path; fall back to
+        # build_filename reconstruction for backwards-compat with older sessions.
+        # Final fallback: read dark from the current data file when hdf5_dark_path
+        # is set but no separate dark file has been designated.
         dark_data = None
         if self.use_dark and not self.zarr_store:
-            dark_folder = self.dark_folder if self.dark_folder else self.folder
-            dark_fn = build_filename(dark_folder, self.dark_stem, self.dark_num,
-                                     self.padding, self.det_nr, self.ext)
-            if os.path.exists(dark_fn):
+            dark_fn = None
+            if self.dark_fn and os.path.exists(self.dark_fn):
+                dark_fn = self.dark_fn
+            else:
+                dark_folder = self.dark_folder if self.dark_folder else self.folder
+                candidate = build_filename(dark_folder, self.dark_stem, self.dark_num,
+                                           self.padding, self.det_nr, self.ext)
+                if os.path.exists(candidate):
+                    dark_fn = candidate
+                elif self.hdf5_dark_path:
+                    # No separate dark file — read dark dataset from the data file itself
+                    file_nr = self.first_file_nr + self.frame_nr // max(1, self.n_frames_per_file)
+                    current_fn = build_filename(self.folder, self.file_stem, file_nr,
+                                               self.padding, self.det_nr, self.ext,
+                                               self.sep_folder)
+                    if os.path.exists(current_fn):
+                        dark_fn = current_fn
+            if dark_fn and os.path.exists(dark_fn):
                 ext_lower = os.path.splitext(dark_fn)[1].lower()
                 if ext_lower in ['.h5', '.hdf', '.hdf5', '.nxs'] and h5py:
                     # HDF5 dark: average all frames in the dark dataset
@@ -2592,6 +2801,8 @@ class FFViewer(QtWidgets.QMainWindow):
             self._draw_rings()
         if self.show_axes:
             self._draw_axes()
+        if self.show_caking and self.cake_params_per_det:
+            self._draw_caking()
 
     # ── Rings ──────────────────────────────────────────────────────
 
@@ -2600,6 +2811,8 @@ class FFViewer(QtWidgets.QMainWindow):
             self._draw_rings()
         if self.show_axes:
             self._draw_axes()
+        if self.show_caking and self.cake_params_per_det:
+            self._draw_caking()
 
     def _draw_rings(self):
         self.image_view.clear_overlays('rings')
@@ -2638,11 +2851,305 @@ class FFViewer(QtWidgets.QMainWindow):
         except ValueError:
             self.image_view.clear_overlays('axes')
             return
-        # Scale label font to GUI font setting; minimum 12pt for readability.
+        # Scale label font to GUI font setting; slightly smaller than before
+        # so larger arrows don't make labels feel oversized.
         gui_pt = self.font_spin.value() if hasattr(self, 'font_spin') else 10
-        font_size = max(12, int(round(gui_pt * 1.4)))
+        font_size = max(10, int(round(gui_pt * 1.0)))
         draw_lab_frame_axes(self.image_view, bc_y, bc_z, self.ny, self.nz,
                             font_size=font_size)
+
+    # ── Caking overlay ─────────────────────────────────────────────
+
+    # Cake CSV column order. R/ETA params are editable + drive the overlay;
+    # OME params are passed through verbatim so save round-trips don't drop them.
+    CAKE_KEYS = ('R_MIN', 'R_MAX', 'R_STEP',
+                 'ETA_MIN', 'ETA_MAX', 'ETA_STEP',
+                 'OME_SUM', 'OME_START', 'OME_STEP')
+
+    @staticmethod
+    def _parse_cake_params_csv(fn):
+        """Parse header+data-row CSV.  Returns dict of {key: float} or {} on error.
+
+        Expected format:
+          R_MIN,R_MAX,R_STEP,ETA_MIN,ETA_MAX,ETA_STEP,OME_SUM,OME_START,OME_STEP
+          440,2200,0.5,125,200,5,20,0,0.25
+        Any header in CAKE_KEYS with a parseable float value is kept; unknown
+        columns are ignored.
+        """
+        try:
+            with open(fn) as f:
+                rows = [r.strip() for r in f
+                        if r.strip() and not r.strip().startswith('#')]
+            if len(rows) < 2:
+                return {}
+            headers = [h.strip() for h in rows[0].split(',')]
+            values  = [v.strip() for v in rows[1].split(',')]
+            result = {}
+            for h, v in zip(headers, values):
+                if h in FFViewer.CAKE_KEYS:
+                    try:
+                        result[h] = float(v)
+                    except ValueError:
+                        pass
+            return result
+        except Exception:
+            return {}
+
+    def _autofind_cake_file(self, param_fn):
+        """Scan the directory of param_fn for any cake_parameters*.csv files
+        and load the first one found (with sibling expansion).
+        Respects the Auto-fill siblings checkbox."""
+        if not getattr(self, '_autofill_check', None) or not self._autofill_check.isChecked():
+            return
+        param_dir = os.path.dirname(param_fn) or '.'
+        try:
+            all_files = os.listdir(param_dir)
+        except Exception:
+            return
+        candidates = sorted(
+            f for f in all_files
+            if f.lower().startswith('cake_parameters') and f.lower().endswith('.csv'))
+        if not candidates:
+            return
+        seed = os.path.join(param_dir, candidates[0])
+        self._load_cake_file(seed, autofound=True)
+
+    def _load_cake_file(self, fn, autofound=False):
+        """Parse fn; auto-derive and load geN siblings; populate cake_params_per_det."""
+        tag = self._find_detector_tag(fn)
+        src_digit = int(tag[1]) if tag else None
+
+        parsed = self._parse_cake_params_csv(fn)
+        if not parsed:
+            if not autofound:
+                QtWidgets.QMessageBox.warning(
+                    self, "Cake params",
+                    f"No recognised cake parameters found in:\n{fn}")
+            return
+
+        self.cake_params_file = fn
+        key = src_digit if src_digit else 1
+        self.cake_params_per_det[key] = parsed
+        print(f"Cake params ge{key} from {os.path.basename(fn)}: {parsed}")
+
+        # Auto-load siblings (ge1…ge4) in the same directory — obeys Auto-fill checkbox
+        loaded_keys = {key: fn}
+        auto_sib = getattr(self, '_autofill_check', None) and self._autofill_check.isChecked()
+        if tag and auto_sib:
+            prefix, src_d = tag
+            for d in '1234':
+                if d == src_d:
+                    continue
+                sib = self._derive_ge_path(fn, prefix + src_d, prefix + d)
+                if sib and os.path.exists(sib):
+                    sib_parsed = self._parse_cake_params_csv(sib)
+                    if sib_parsed:
+                        self.cake_params_per_det[int(d)] = sib_parsed
+                        loaded_keys[int(d)] = sib
+                        print(f"Cake params ge{d} from {os.path.basename(sib)}: {sib_parsed}")
+
+        # Refresh per-detector widgets for every key that was loaded
+        if self.multi_mode:
+            for det_key, cake_fn in loaded_keys.items():
+                widget_idx = det_key - 1
+                if 0 <= widget_idx < len(self._det_widgets):
+                    self._det_widgets[widget_idx]['cake_lbl'].setText(
+                        os.path.basename(cake_fn))
+                    self._refresh_det_widget(widget_idx)
+
+        # Update Data Source panel label and editable fields
+        if hasattr(self, 'cake_label'):
+            self.cake_label.setText(os.path.basename(fn))
+        if hasattr(self, '_cake_edits'):
+            self._populate_cake_edits()
+
+        if self.show_caking:
+            self._draw_caking()
+
+    def _populate_cake_edits(self):
+        """Fill the cake parameter edit boxes from cake_params_per_det."""
+        for det in [1, 2, 3, 4]:
+            p = self.cake_params_per_det.get(det, {})
+            for key, edit in self._cake_edits[det].items():
+                val = p.get(key, '')
+                edit.setText(str(val) if val != '' else '')
+
+    def _on_cake_param_edited(self, det, key, edit):
+        """User edited a cake parameter field — update state and redraw."""
+        try:
+            val = float(edit.text().strip())
+        except ValueError:
+            return
+        prev = self.cake_params_per_det.setdefault(det, {}).get(key)
+        if prev == val:
+            return  # nothing changed; skip redundant redraw
+        self.cake_params_per_det[det][key] = val
+        # Keep the per-GE inline status label (R=[..,..] η=[..,..] step=..) in sync
+        if hasattr(self, '_det_widgets') and 1 <= det <= len(self._det_widgets):
+            self._refresh_det_widget(det - 1)
+        # If overlay is on, refresh it. If it's off, leave it off — the user
+        # will hit Plot when they want to see the result.
+        if self.show_caking:
+            self._draw_caking()
+
+    def _on_save_cake_file(self):
+        """Save all loaded GE detector cake params to their CSV files."""
+        if not self.cake_params_per_det:
+            QtWidgets.QMessageBox.information(
+                self, "Save Cake", "No cake parameters to save.")
+            return
+
+        if self.cake_params_file:
+            tag = self._find_detector_tag(self.cake_params_file)
+            if tag:
+                prefix, src_d = tag
+                saved = []
+                for det in [1, 2, 3, 4]:
+                    if det not in self.cake_params_per_det:
+                        continue
+                    if str(det) == src_d:
+                        # Seed file: _derive_ge_path returns None for an
+                        # identity substitution, so write to the original path.
+                        sib = self.cake_params_file
+                    else:
+                        sib = self._derive_ge_path(
+                            self.cake_params_file,
+                            prefix + src_d, prefix + str(det))
+                    if sib:
+                        self._write_cake_csv(sib, det)
+                        saved.append(os.path.basename(sib))
+                if saved:
+                    print(f"Cake params saved: {', '.join(saved)}")
+                    return
+
+        # No sibling path available — prompt for a save location
+        fn, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save Cake Parameters",
+            os.path.dirname(self.cake_params_file) or os.getcwd(),
+            "CSV Files (*.csv);;All (*)")
+        if not fn:
+            return
+        det = next(iter(self.cake_params_per_det))
+        self._write_cake_csv(fn, det)
+        print(f"Cake params saved: {fn}")
+
+    def _write_cake_csv(self, fn, det_nr):
+        """Write cake_params_per_det[det_nr] to fn in header+data row format.
+
+        Writes all known columns (R/ETA/OME) so a load → edit → save round-trip
+        preserves OME values even when they're not edited in the GUI.
+        """
+        p = self.cake_params_per_det.get(det_nr, {})
+        header = ','.join(self.CAKE_KEYS)
+        values = ','.join(str(p.get(k, '')) for k in self.CAKE_KEYS)
+        try:
+            with open(fn, 'w') as f:
+                f.write(header + '\n')
+                f.write(values + '\n')
+        except Exception as e:
+            print(f"Cake save failed ({os.path.basename(fn)}): {e}")
+
+    def _on_pick_cake_file(self):
+        """Open file dialog to select a cake_parameters CSV."""
+        fn, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select Cake Parameters CSV",
+            os.path.dirname(self.cake_params_file) or os.getcwd(),
+            "CSV Files (*.csv);;All (*)")
+        if fn:
+            self._load_cake_file(fn)
+
+    def _on_pick_det_cake(self, idx):
+        fn, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, f"Select GE{idx+1} cake parameters CSV",
+            os.path.dirname(self.cake_params_file) or
+            os.path.dirname(self._det_states[idx].param_file) or os.getcwd(),
+            "CSV Files (*.csv);;All (*)")
+        if fn:
+            self._load_cake_file(fn)
+
+    def _show_cake_overlay(self):
+        """Turn the caking overlay on (or refresh it if already on)."""
+        if not self.cake_params_per_det:
+            QtWidgets.QMessageBox.information(
+                self, "Caking Overlay",
+                "No caking parameters loaded.\n"
+                "Load a params file with RMin/RMax/EtaMin/… keys,\n"
+                "or pick a cake_parameters CSV via 'Cake File…'.")
+            return
+        self.show_caking = True
+        self._draw_caking()
+        self._update_cake_plot_button()
+
+    def _hide_cake_overlay(self):
+        self.show_caking = False
+        self.image_view.clear_overlays('caking')
+        self._update_cake_plot_button()
+
+    def _toggle_cake_overlay(self):
+        """C-shortcut and Plot/Clear button handler — flip the overlay state."""
+        if self.show_caking:
+            self._hide_cake_overlay()
+        else:
+            self._show_cake_overlay()
+
+    def _update_cake_plot_button(self):
+        btn = getattr(self, '_cake_plot_btn', None)
+        if btn is not None:
+            btn.setText("Clear" if self.show_caking else "Plot")
+
+    def _draw_caking(self):
+        """Draw caking sector overlays from cake_params_per_det."""
+        self.image_view.clear_overlays('caking')
+        if not self.cake_params_per_det:
+            return
+        try:
+            bc_y = float(self.bcy_edit.text())
+            bc_z = float(self.bcz_edit.text())
+        except ValueError:
+            return
+
+        colors = _color_cycle_colors
+        if self.multi_mode:
+            det_list = [d for d in sorted(self.cake_params_per_det.keys())
+                        if 1 <= d <= 4 and self._det_states[d - 1].enabled]
+        else:
+            det_nr = getattr(self, 'det_nr', 1)
+            if det_nr in self.cake_params_per_det:
+                det_list = [det_nr]
+            else:
+                det_list = list(self.cake_params_per_det.keys())[:1]
+
+        detectors = []
+        for i, det in enumerate(det_list):
+            p = self.cake_params_per_det[det]
+            try:
+                r_min  = float(p['R_MIN'])
+                r_max  = float(p['R_MAX'])
+                e_step = float(p['ETA_STEP'])
+                if self.multi_mode:
+                    # Cake CSV ETA values are in MIDAS lab frame (eta=atan2(-Y,Z)).
+                    # With the image_view's 'br' origin, +Y_lab is on display-LEFT,
+                    # so MIDAS eta=+90° (= -Y_lab) lands on display-RIGHT — the
+                    # same place draw_caking_overlay puts eta_arg=+90°. So pass
+                    # cake_eta straight through. Per-detector tx is already
+                    # baked into the data placement via compute_inv_coords.
+                    eta_min = float(p['ETA_MIN'])
+                    eta_max = float(p['ETA_MAX'])
+                    color = colors[(det - 1) % len(colors)]
+                else:
+                    try:
+                        tx_offset = float(self.tx_edit.text())
+                    except ValueError:
+                        tx_offset = 0.0
+                    eta_min = float(p['ETA_MIN']) + tx_offset
+                    eta_max = float(p['ETA_MAX']) + tx_offset
+                    color = colors[i % len(colors)]
+                detectors.append((color, r_min, r_max,
+                                   eta_min, eta_max, e_step))
+            except KeyError:
+                pass
+
+        draw_caking_overlay(self.image_view, bc_y, bc_z, detectors)
 
     def _on_ring_selection(self):
         """Open ring material selection dialog."""
