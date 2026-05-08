@@ -656,7 +656,7 @@ def add_shortcut(parent, key, callback, context=QtCore.Qt.WindowShortcut):
 def draw_lab_frame_axes(image_view, bc_y, bc_z, ny, nz,
                          category='axes',
                          color='#FFD700',
-                         eta_tick_color='#888888',
+                         eta_tick_color='#FFA500',
                          font_size=12):
     """Draw MIDAS lab-frame axes anchored at (bc_y, bc_z).
 
@@ -687,9 +687,9 @@ def draw_lab_frame_axes(image_view, bc_y, bc_z, ny, nz,
     import math
     image_view.clear_overlays(category)
 
-    # Arrow length: 10% of the smaller image dim, clamped to a sensible range.
-    L = max(40.0, min(200.0, 0.10 * min(ny, nz)))
-    head = max(10.0, L * 0.18)
+    # Arrow length: 15% of the smaller image dim, clamped to a sensible range.
+    L = max(60.0, min(400.0, 0.15 * min(ny, nz)))
+    head = max(15.0, L * 0.20)
 
     origin = getattr(image_view, '_origin', 'bl')
     # Sign of data-x that visually appears on display-LEFT:
@@ -699,8 +699,8 @@ def draw_lab_frame_axes(image_view, bc_y, bc_z, ny, nz,
 
     text_pen  = pg.mkPen('w')
     text_fill = pg.mkBrush(0, 0, 0, 200)
-    pen       = pg.mkPen(color, width=2.5)
-    arc_pen   = pg.mkPen(color, width=2.0)
+    pen       = pg.mkPen(color, width=3.5)
+    arc_pen   = pg.mkPen(color, width=2.5)
 
     # Fonts scale off the caller-supplied label size. ⊗ uses a larger size so
     # the beam-direction glyph reads clearly; η ticks match the label size.
@@ -808,3 +808,70 @@ def draw_lab_frame_axes(image_view, bc_y, bc_z, ny, nz,
         tick.setFont(eta_font)
         tick.setPos(bc_y + dx, bc_z + dy)
         image_view.add_overlay(tick, category)
+
+
+def draw_caking_overlay(image_view, bc_y, bc_z, detectors,
+                        category='caking'):
+    """Draw caking sector overlays for one or more GE detectors.
+
+    Each entry in *detectors* is a tuple:
+      ``(color, R_MIN, R_MAX, ETA_MIN, ETA_MAX, ETA_STEP)``
+    where R values are in detector pixels from the beam center and ETA values
+    are in degrees using the MIDAS convention (η=0 → +Z/top, +90 → display-right).
+    ETA_MIN/MAX may use the 0-360 branch (e.g. 125→200) or the ±180 branch.
+
+    Draws for each detector:
+      - Inner arc at R_MIN from ETA_MIN to ETA_MAX
+      - Outer arc at R_MAX from ETA_MIN to ETA_MAX
+      - Radial lines at ETA_MIN, ETA_MIN+STEP, …, ETA_MAX (R_MIN→R_MAX)
+    No intermediate R circles are drawn (R_STEP is typically too fine).
+    """
+    import math
+    image_view.clear_overlays(category)
+    if not detectors:
+        return
+
+    origin = getattr(image_view, '_origin', 'bl')
+    y_sign = +1.0 if origin == 'br' else -1.0
+
+    for color, r_min, r_max, eta_min, eta_max, eta_step in detectors:
+        pen = pg.mkPen(color, width=1.5)
+
+        # Arc resolution: ~0.5° per point, minimum 120 points
+        n_pts = max(120, int(abs(eta_max - eta_min) / 0.5))
+        eta_arc = np.linspace(eta_min, eta_max, n_pts)
+        eta_rad = np.deg2rad(eta_arc)
+        sin_e = np.sin(eta_rad)
+        cos_e = np.cos(eta_rad)
+
+        # Inner arc at R_MIN
+        arc_y = bc_y + (-y_sign) * r_min * sin_e
+        arc_z = bc_z + r_min * cos_e
+        image_view.add_overlay(
+            pg.PlotDataItem(arc_y, arc_z, pen=pen), category)
+
+        # Outer arc at R_MAX
+        arc_y = bc_y + (-y_sign) * r_max * sin_e
+        arc_z = bc_z + r_max * cos_e
+        image_view.add_overlay(
+            pg.PlotDataItem(arc_y, arc_z, pen=pen), category)
+
+        # Radial lines at each ETA_STEP boundary (including ETA_MIN and ETA_MAX)
+        if eta_step > 0:
+            n_steps = int(round((eta_max - eta_min) / eta_step))
+            eta_lines = [eta_min + i * eta_step for i in range(n_steps + 1)]
+            # Always include the exact max boundary
+            if abs(eta_lines[-1] - eta_max) > 0.01:
+                eta_lines.append(eta_max)
+        else:
+            eta_lines = [eta_min, eta_max]
+
+        for eta in eta_lines:
+            er = math.radians(eta)
+            s, c = math.sin(er), math.cos(er)
+            y0 = bc_y + (-y_sign) * r_min * s
+            z0 = bc_z + r_min * c
+            y1 = bc_y + (-y_sign) * r_max * s
+            z1 = bc_z + r_max * c
+            image_view.add_overlay(
+                pg.PlotDataItem([y0, y1], [z0, z1], pen=pen), category)

@@ -39,6 +39,15 @@
 - **Centralized MIDAS_ParamParser** — unified parameter file parsing across all executables
 - **Gradient-aware pixel splitting** — sub-pixel radial resampling for improved integration accuracy
 
+### Recent GUI Update (May 2026)
+
+- **FF viewer caking overlay workflow** — added load/save/edit support for `cake_parameters*.csv`, per-detector caking metadata, and composite-sector overlay drawing.
+- **Plot/Clear + keyboard toggle** — caking overlay can now be toggled directly from the GUI and with the `C` shortcut.
+- **Multi-detector caking controls** — HYDRA mode now includes per-GE cake rows and a dedicated cake parameter editor panel.
+- **Path precedence hardening** — explicit user selections (first file, dark file, HDF5 data/dark dataset paths) are preserved and no longer overwritten by later parameter-file loads.
+- **Dark subtraction fallback** — when no separate dark file is configured, dark data can be read from the current HDF5 data file path.
+- **Overlay readability improvements** — lab-frame axes were restyled for clearer on-image visibility.
+
 ### Version 10 Highlights
 
 - **Consolidated HDF5 output** — all FF-HEDM results (grains, spots, strains, peak provenance) in a single `.h5` file
