@@ -119,11 +119,50 @@ def build_filename(folder, fstem, fnum, padding, det_nr, ext, sep_folder=False):
     return fn
 
 
+def apply_image_transforms(arr, do_transpose=False, do_hflip=False, do_vflip=False):
+    """Apply MIDAS-convention orientation transforms to a 2D array.
+
+    Single source of truth for the convention; every reader (data, dark,
+    mask, slab fast-paths) and the display path go through it. Keeping it
+    in one place prevents the "data flipped on cols, dark flipped on rows"
+    trap that previously caused dark-residual artifacts when HFlip/VFlip
+    were applied with subtly different axes in different code paths.
+
+      HFlip      → reverse columns (axis 1)  — matches MIDAS C ImTransOpt 1
+      VFlip      → reverse rows    (axis 0)  — matches MIDAS C ImTransOpt 2
+      Transpose  → swap axes                 — matches MIDAS C ImTransOpt 3
+
+    Order: transpose first, then HFlip/VFlip combined.
+    """
+    if arr is None:
+        return None
+    if do_transpose:
+        arr = np.transpose(arr)
+    if do_hflip and do_vflip:
+        arr = arr[::-1, ::-1].copy()
+    elif do_hflip:
+        arr = arr[:, ::-1].copy()
+    elif do_vflip:
+        arr = arr[::-1, :].copy()
+    return arr
+
+
 def read_image(fn, header, bytes_per_pixel, ny, nz, frame_idx=0,
-               do_transpose=False, do_hflip=False, do_vflip=False,
                mask=None, zarr_store=None, zarr_dark_mean=None,
                is_dark=False, hdf5_data_path='', hdf5_dark_path=''):
-    """Read a single image frame. Returns 2D float array."""
+    """Read a single image frame. Returns 2D float array in RAW orientation.
+
+    Orientation transforms (HFlip / VFlip / Transpose) are NOT applied here
+    — apply them with ``apply_image_transforms`` after dark subtraction so
+    data and dark stay aligned in raw coordinates.
+
+    The Zarr branch keeps a hard-coded ``[::-1, ::-1]`` un-rotation because
+    MIDAS-format zarr zips store frames in the opposite chirality on disk;
+    that is part of the file format, not a user-selectable orientation, so
+    it stays inside the reader.
+
+    Mask values are zeroed in raw orientation. The mask must be raw too.
+    """
     # Zarr-ZIP mode
     if zarr_store is not None:
         try:
@@ -132,11 +171,8 @@ def read_image(fn, header, bytes_per_pixel, ny, nz, frame_idx=0,
             else:
                 dset = zarr_store['exchange/data']
                 data = dset[frame_idx, :, :].astype(float) if frame_idx < dset.shape[0] else np.zeros((ny, nz))
+            # Zarr file-format un-rotation (NOT a user transform).
             data = data.astype(float)[::-1, ::-1].copy()
-            if do_transpose: data = np.transpose(data)
-            if do_hflip and do_vflip: data = data[::-1, ::-1].copy()
-            elif do_hflip: data = data[::-1, :].copy()
-            elif do_vflip: data = data[:, ::-1].copy()
             if mask is not None and mask.shape == data.shape:
                 data[mask == 1] = 0
             return data
@@ -149,8 +185,9 @@ def read_image(fn, header, bytes_per_pixel, ny, nz, frame_idx=0,
         temp_fn = get_bz2_data(fn)
         try:
             return read_image(temp_fn, header, bytes_per_pixel, ny, nz, frame_idx,
-                              do_transpose, do_hflip, do_vflip, mask,
-                              hdf5_data_path=hdf5_data_path, hdf5_dark_path=hdf5_dark_path)
+                              mask=mask,
+                              hdf5_data_path=hdf5_data_path,
+                              hdf5_dark_path=hdf5_dark_path)
         finally:
             if os.path.exists(temp_fn): os.remove(temp_fn)
 
@@ -181,31 +218,30 @@ def read_image(fn, header, bytes_per_pixel, ny, nz, frame_idx=0,
         data = data.reshape((ny, nz))
 
     data = data.astype(float)
-    if do_transpose: data = np.transpose(data)
-    if do_hflip and do_vflip: data = data[::-1, ::-1].copy()
-    elif do_hflip: data = data[::-1, :].copy()
-    elif do_vflip: data = data[:, ::-1].copy()
     if mask is not None and mask.shape == data.shape:
         data[mask == 1] = 0
     return data
 
 
 def read_image_max(fn, header, bytes_per_pixel, ny, nz, n_frames, start_frame=0,
-                   do_transpose=False, do_hflip=False, do_vflip=False,
                    mask=None, hdf5_data_path=''):
-    """Compute pixel-wise max over frames."""
-    ext = os.path.splitext(fn)[1].lower()
+    """Compute pixel-wise max over frames in RAW orientation."""
     data_max = None
     for i in range(start_frame, start_frame + n_frames):
         frame = read_image(fn, header, bytes_per_pixel, ny, nz, i,
-                           do_transpose, do_hflip, do_vflip, mask,
-                           hdf5_data_path=hdf5_data_path)
+                           mask=mask, hdf5_data_path=hdf5_data_path)
         data_max = frame if data_max is None else np.maximum(data_max, frame)
     return data_max
 
 
-def read_mask(fn, ny, nz, do_transpose=False, do_hflip=False, do_vflip=False):
-    """Read uint8 TIFF mask file. 1 = masked, 0 = good pixel."""
+def read_mask(fn, ny, nz):
+    """Read uint8 TIFF mask file in RAW orientation. 1 = masked, 0 = good.
+
+    Mask file is assumed to be in the same on-disk orientation as the data
+    (which is the natural case — both come from the same detector run).
+    Apply user-selected HFlip/VFlip together with the data after dark
+    subtraction via ``apply_image_transforms``.
+    """
     if not fn or not os.path.exists(fn):
         return None
     try:
@@ -216,10 +252,6 @@ def read_mask(fn, ny, nz, do_transpose=False, do_hflip=False, do_vflip=False):
         if mask.shape != (ny, nz):
             print(f"Mask shape {mask.shape} does not match image ({ny}, {nz})")
             return None
-        if do_transpose: mask = np.transpose(mask)
-        if do_hflip and do_vflip: mask = mask[::-1, ::-1].copy()
-        elif do_hflip: mask = mask[::-1, :].copy()
-        elif do_vflip: mask = mask[:, ::-1].copy()
         return mask
     except Exception as e:
         print(f"Error reading mask: {e}")
@@ -1670,10 +1702,12 @@ class FFViewer(QtWidgets.QMainWindow):
                 fn = build_filename(self.folder, self.file_stem, file_nr,
                                     self.padding, self.det_nr, self.ext, self.sep_folder)
                 try:
+                    # Mean/max are orientation-invariant, so raw data is fine.
                     data = read_image(fn, self.header_size, self.bytes_per_pixel,
                                       self.ny, self.nz, frame_in,
-                                      False, False, False,
-                                      None, self.zarr_store, self.zarr_dark_mean,
+                                      mask=None,
+                                      zarr_store=self.zarr_store,
+                                      zarr_dark_mean=self.zarr_dark_mean,
                                       hdf5_data_path=self.hdf5_data_path,
                                       hdf5_dark_path=self.hdf5_dark_path)
                     means.append(float(np.mean(data)))
@@ -2534,16 +2568,17 @@ class FFViewer(QtWidgets.QMainWindow):
             self._load_and_display_multi()
             return
 
-        # Mask
+        # Mask (raw orientation — flipped along with data after subtraction)
         mask = None
         if self.apply_mask and self.mask_edit.text():
-            mask = read_mask(self.mask_edit.text(), self.ny, self.nz,
-                             self.do_transpose, self.hflip, self.vflip)
+            mask = read_mask(self.mask_edit.text(), self.ny, self.nz)
 
         # Dark subtraction — prefer the directly stored path; fall back to
         # build_filename reconstruction for backwards-compat with older sessions.
         # Final fallback: read dark from the current data file when hdf5_dark_path
         # is set but no separate dark file has been designated.
+        # Dark is loaded in RAW orientation; the user-selected
+        # transpose/HFlip/VFlip are applied to (data − dark) at the end.
         dark_data = None
         if self.use_dark and not self.zarr_store:
             dark_fn = None
@@ -2566,7 +2601,8 @@ class FFViewer(QtWidgets.QMainWindow):
             if dark_fn and os.path.exists(dark_fn):
                 ext_lower = os.path.splitext(dark_fn)[1].lower()
                 if ext_lower in ['.h5', '.hdf', '.hdf5', '.nxs'] and h5py:
-                    # HDF5 dark: average all frames in the dark dataset
+                    # HDF5 dark: average all frames in the dark dataset.
+                    # No flips here — done in raw, applied later.
                     try:
                         with h5py.File(dark_fn, 'r') as f:
                             dpath = self.hdf5_dark_path
@@ -2576,20 +2612,11 @@ class FFViewer(QtWidgets.QMainWindow):
                                     dark_data = np.mean(dset[:], axis=0).astype(float)
                                 else:
                                     dark_data = dset[:].astype(float)
-                                if self.do_transpose:
-                                    dark_data = np.transpose(dark_data)
-                                if self.hflip and self.vflip:
-                                    dark_data = dark_data[::-1, ::-1].copy()
-                                elif self.hflip:
-                                    dark_data = dark_data[::-1, :].copy()
-                                elif self.vflip:
-                                    dark_data = dark_data[:, ::-1].copy()
                     except Exception as e:
                         print(f"Error reading HDF5 dark: {e}")
                 else:
                     dark_data = read_image(dark_fn, self.header_size, self.bytes_per_pixel,
-                                           self.ny, self.nz, 0,
-                                           self.do_transpose, self.hflip, self.vflip)
+                                           self.ny, self.nz, 0)
 
         # MaxOverFrames / SumOverFrames — parallel computation
         if self.max_check.isChecked() or self.sum_check.isChecked():
@@ -2624,6 +2651,11 @@ class FFViewer(QtWidgets.QMainWindow):
                 t0 = _time.monotonic()
                 p = params
 
+                # All fast paths below accumulate in RAW orientation, subtract
+                # the (raw) dark, then apply the user transforms ONCE at the
+                # very end via apply_image_transforms — no per-path flip
+                # convention to keep in sync.
+
                 # ── Fast path: Zarr slab read ──
                 if p['zarr_store'] is not None and 'exchange/data' in p['zarr_store']:
                     dset = p['zarr_store']['exchange/data']
@@ -2633,16 +2665,14 @@ class FFViewer(QtWidgets.QMainWindow):
                         result = np.sum(slab.astype(np.float64), axis=0)
                     else:
                         result = np.max(slab.astype(np.float64), axis=0)
-                    # Apply same transforms as read_image for zarr
+                    # Zarr file-format un-rotation (NOT a user transform).
                     result = result[::-1, ::-1].copy()
-                    if p['do_transpose']: result = np.transpose(result)
-                    if p['hflip'] and p['vflip']: result = result[::-1, ::-1].copy()
-                    elif p['hflip']: result = result[::-1, :].copy()
-                    elif p['vflip']: result = result[:, ::-1].copy()
                     if p['mask'] is not None and p['mask'].shape == result.shape:
                         result[p['mask'] == 1] = 0
                     if p['dark_data'] is not None:
                         result = np.maximum(result - p['dark_data'], 0)
+                    result = apply_image_transforms(result,
+                        p['do_transpose'], p['hflip'], p['vflip'])
                     elapsed = _time.monotonic() - t0
                     return result, end_frame - p['start_frame'], elapsed
 
@@ -2667,20 +2697,20 @@ class FFViewer(QtWidgets.QMainWindow):
                                     result = np.sum(slab, axis=0)
                                 else:
                                     result = np.max(slab, axis=0)
-                                if p['do_transpose']: result = np.transpose(result)
-                                if p['hflip'] and p['vflip']: result = result[::-1, ::-1].copy()
-                                elif p['hflip']: result = result[::-1, :].copy()
-                                elif p['vflip']: result = result[:, ::-1].copy()
                                 if p['mask'] is not None and p['mask'].shape == result.shape:
                                     result[p['mask'] == 1] = 0
                                 if p['dark_data'] is not None:
                                     result = np.maximum(result - p['dark_data'], 0)
+                                result = apply_image_transforms(result,
+                                    p['do_transpose'], p['hflip'], p['vflip'])
                                 elapsed = _time.monotonic() - t0
                                 return result, f_end - f_start, elapsed
                     except Exception as e:
                         print(f"HDF5 slab read failed, falling back to parallel: {e}")
 
                 # ── General path: ThreadPoolExecutor for raw/TIFF/multi-file ──
+                # Each worker returns a RAW frame; dark subtraction and the
+                # final user transform happen once after accumulation below.
                 def _read_one(frame_idx):
                     fr = p['start_frame'] + frame_idx
                     f_nr = p['first_file_nr'] + fr // n_fpf
@@ -2691,8 +2721,9 @@ class FFViewer(QtWidgets.QMainWindow):
                     return read_image(
                         fn, p['header_size'], p['bytes_per_pixel'],
                         p['ny'], p['nz'], f_in,
-                        p['do_transpose'], p['hflip'], p['vflip'],
-                        p['mask'], p['zarr_store'], p['zarr_dark_mean'],
+                        mask=p['mask'],
+                        zarr_store=p['zarr_store'],
+                        zarr_dark_mean=p['zarr_dark_mean'],
                         hdf5_data_path=p['hdf5_data_path'],
                         hdf5_dark_path=p['hdf5_dark_path'])
 
@@ -2706,6 +2737,8 @@ class FFViewer(QtWidgets.QMainWindow):
                             frame = future.result()
                         except Exception:
                             continue
+                        # Dark in raw orientation; subtract per-frame so
+                        # max/sum behaves correctly per pixel.
                         if p['dark_data'] is not None:
                             frame = np.maximum(frame - p['dark_data'], 0)
                         if data_accum is None:
@@ -2719,6 +2752,9 @@ class FFViewer(QtWidgets.QMainWindow):
 
                 if data_accum is None:
                     data_accum = np.zeros((p['ny'], p['nz']))
+                # Apply user transforms once on the final accumulated raw result.
+                data_accum = apply_image_transforms(data_accum,
+                    p['do_transpose'], p['hflip'], p['vflip'])
                 elapsed = _time.monotonic() - t0
                 return data_accum, count, elapsed
 
@@ -2773,13 +2809,20 @@ class FFViewer(QtWidgets.QMainWindow):
 
             data = read_image(fn, self.header_size, self.bytes_per_pixel,
                               self.ny, self.nz, frame_in_file,
-                              self.do_transpose, self.hflip, self.vflip,
-                              mask, self.zarr_store, self.zarr_dark_mean,
+                              mask=mask,
+                              zarr_store=self.zarr_store,
+                              zarr_dark_mean=self.zarr_dark_mean,
                               hdf5_data_path=self.hdf5_data_path,
                               hdf5_dark_path=self.hdf5_dark_path)
 
+            # data and dark are both in RAW orientation here; subtract first,
+            # then apply the user transforms once. This is the change that
+            # makes HFlip/VFlip purely a display flip and rules out the
+            # axis-swap class of bugs (data flipped on cols, dark on rows).
             if dark_data is not None:
                 data = np.maximum(data - dark_data, 0)
+            data = apply_image_transforms(data,
+                self.do_transpose, self.hflip, self.vflip)
 
         data = self._apply_tx_rotation(data)
         self.bdata = data
