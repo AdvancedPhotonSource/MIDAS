@@ -57,8 +57,12 @@ class MidasGUI(QtWidgets.QMainWindow):
         # ── Central widget: nav list + stacked panels ────────────
         self._nav = QtWidgets.QListWidget()
         self._nav.setFixedWidth(220)
+        # Inherit background/text from the active palette (Base / Text) so
+        # dark mode produces light-on-dark instead of the previous hardcoded
+        # light-on-light. Only paddings, radius, and the selection / disabled
+        # accents — which work in either theme — stay in the stylesheet.
         self._nav.setStyleSheet("""
-            QListWidget { background: #f4f4f4; border: none; padding: 6px; }
+            QListWidget { border: none; padding: 6px; }
             QListWidget::item { padding: 8px 10px; margin-bottom: 2px; border-radius: 4px; }
             QListWidget::item:selected { background: #2a82da; color: white; }
             QListWidget::item:disabled { color: #999; }

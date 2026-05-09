@@ -502,18 +502,19 @@ class FFViewer(QtWidgets.QMainWindow):
         main_layout.addLayout(tb)
 
         # ── Image View ──
-        # 'br' origin mirrors the display about the vertical axis so the
-        # composite reads in the same chirality as the physical HYDRA setup
-        # (purely a display flip — data, BC and per-detector tx are unchanged,
-        # and overlays follow because draw_*_overlay branch on _origin).
-        self.image_view = MIDASImageView(self, origin='br')
+        # Start in 'bl' for single-panel mode: data coming out of MIDAS with
+        # a correct ImTransOpt is already in physical chirality, so no extra
+        # display flip is needed. _on_detector_mode_changed swaps to 'br'
+        # when Multi-Det is enabled, because the HYDRA composite stitch
+        # introduces an X flip that has to be cancelled at display time.
+        self.image_view = MIDASImageView(self, origin='bl')
         self.image_view.set_colormap(self.colormap_name)
         self.font_spin = self.image_view._font_spin
         self.image_view.fontSizeChanged.connect(self._on_font_changed)
-        main_layout.addWidget(self.image_view, stretch=1)
 
-        # ── Control Panels ──
+        # ── Control Panels (built first so they can go in the splitter) ──
         ctrl = QtWidgets.QHBoxLayout()
+        ctrl.setContentsMargins(0, 0, 0, 0)
         ctrl.setSpacing(4)
         # Stack the single-detector and multi-detector data-source panels;
         # the toolbar Multi-Det checkbox swaps which one is visible.
@@ -523,7 +524,40 @@ class FFViewer(QtWidgets.QMainWindow):
         ctrl.addWidget(self._file_stack, stretch=3)
         ctrl.addWidget(self._build_image_display_panel(), stretch=3)
         ctrl.addWidget(self._build_processing_panel(), stretch=2)
-        main_layout.addLayout(ctrl)
+        ctrl_widget = QtWidgets.QWidget()
+        ctrl_widget.setLayout(ctrl)
+
+        # Wrap the controls in a scroll area so:
+        #   - the bottom's *effective* minimum stays small (~one row),
+        #     letting the user shrink the window without hitting a tall
+        #     floor from the multi-detector panel's full content height,
+        #   - swapping the QStackedWidget page (single ↔ multi) or growing
+        #     content (cake editor, status labels) scrolls inside the
+        #     viewport instead of stealing height from the image area.
+        ctrl_scroll = QtWidgets.QScrollArea()
+        ctrl_scroll.setWidget(ctrl_widget)
+        ctrl_scroll.setWidgetResizable(True)
+        ctrl_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        ctrl_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        ctrl_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+
+        # Vertical splitter so the image dominates at startup but the user
+        # can drag the divider for more controls space. Stretch factors
+        # 1:0 send any extra vertical space to the image, never the
+        # bottom; setSizes seeds the bottom with the natural sizeHint of
+        # the controls so the cake row fits without scrolling on startup.
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        splitter.addWidget(self.image_view)
+        splitter.addWidget(ctrl_scroll)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        ctrl_widget.adjustSize()
+        sb_w = self.style().pixelMetric(QtWidgets.QStyle.PM_ScrollBarExtent)
+        bottom_h = ctrl_widget.sizeHint().height() + sb_w + 4
+        splitter.setSizes([900, bottom_h])
+        splitter.setChildrenCollapsible(False)
+        main_layout.addWidget(splitter, stretch=1)
+        self._main_splitter = splitter
 
         # ── Status Bar ──
         self.status_label = QtWidgets.QLabel("Ready")
@@ -693,6 +727,9 @@ class FFViewer(QtWidgets.QMainWindow):
     def _build_file_panel(self):
         grp = QtWidgets.QGroupBox("Data Source")
         lay = QtWidgets.QGridLayout(grp)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setVerticalSpacing(2)
+        lay.setHorizontalSpacing(4)
         lay.setColumnStretch(4, 1)
 
         btn_first = QtWidgets.QPushButton("First File")
@@ -760,10 +797,110 @@ class FFViewer(QtWidgets.QMainWindow):
         self.param_label.setStyleSheet("color: gray;")
         lay.addWidget(self.param_label, 5, 2, 1, 2)
 
-        # Cake parameter UI lives in the multi-detector panel; built lazily by
-        # _build_cake_widget() and added to that panel.
+        # Single-mode cake editor (one row for the active detector). The
+        # multi-detector panel gets the 4-row variant via _build_cake_widget().
+        lay.addWidget(self._build_single_cake_widget(), 6, 0, 1, 5)
+
+        # See _build_image_display_panel: stretch row pushes everything up
+        # so the panel's natural height is minimal — the whole control strip
+        # shrinks because the HBoxLayout no longer needs to match a tall
+        # over-spread sibling.
+        lay.setRowStretch(7, 1)
 
         return grp
+
+    # In single-panel mode the cake params are stored under this index in
+    # cake_params_per_det. Keeping it at 1 means the single-mode editor and
+    # any HYDRA-mode GE1 editor share the same backing dict entry, which
+    # the integrator workflow expects.
+    _SINGLE_CAKE_DET = 1
+
+    def _active_cake_det(self):
+        """Dict key for the current active cake-params entry.
+
+        Single mode: always 1 (``_SINGLE_CAKE_DET``) so the editor, the
+        param-file fallback, and the overlay all read/write the same slot.
+        Multi mode: the running ``det_nr`` (1–4 for GE1–GE4).
+
+        Without this, ``self.det_nr`` may be -1 (non-HYDRA single panel),
+        which silently splits the cake state across two dict keys and the
+        overlay ends up drawing stale values.
+        """
+        return self.det_nr if self.multi_mode else self._SINGLE_CAKE_DET
+
+    def _build_single_cake_widget(self):
+        """Compact cake editor for single-panel mode (one row, generic).
+
+        Same Load/Save/Plot buttons as the HYDRA editor and the same 9
+        editable columns, but no GE1–GE4 labels — single mode can be any
+        single panel (1-ID-E GE5, 20-ID-E/D varex, 1-ID-C varex, etc.).
+        """
+        w = QtWidgets.QWidget()
+        cl = QtWidgets.QGridLayout(w)
+        cl.setContentsMargins(0, 4, 0, 0)
+        cl.setHorizontalSpacing(2)
+        cl.setVerticalSpacing(1)
+
+        btn_load = QtWidgets.QPushButton("Load Cake")
+        btn_load.setToolTip("Load a cake_parameters CSV.")
+        btn_load.clicked.connect(self._on_pick_cake_file)
+        cl.addWidget(btn_load, 0, 0)
+
+        btn_save = QtWidgets.QPushButton("Save Cake")
+        btn_save.setToolTip("Write the current cake parameters back to CSV.")
+        btn_save.clicked.connect(self._on_save_cake_file)
+        cl.addWidget(btn_save, 0, 1)
+
+        self._single_cake_plot_btn = QtWidgets.QPushButton("Plot")
+        self._single_cake_plot_btn.setToolTip(
+            "Draw / clear the caking sector overlay.\nKeyboard shortcut: C")
+        self._single_cake_plot_btn.clicked.connect(self._toggle_cake_overlay)
+        cl.addWidget(self._single_cake_plot_btn, 0, 2)
+
+        fm = btn_load.fontMetrics()
+        btn_w = max(fm.horizontalAdvance(b.text())
+                    for b in (btn_load, btn_save, self._single_cake_plot_btn)) + 60
+        for b in (btn_load, btn_save, self._single_cake_plot_btn):
+            b.setFixedWidth(btn_w)
+
+        self.single_cake_label = QtWidgets.QLabel("")
+        self.single_cake_label.setStyleSheet("color: gray;")
+        cl.addWidget(self.single_cake_label, 0, 3, 1, 7)
+
+        _hs = "color: gray; font-size: 9pt;"
+        column_labels = ["R min", "R max", "R step",
+                         "η min", "η max", "η step",
+                         "ω sum", "ω start", "ω step"]
+        cl.addWidget(QtWidgets.QLabel(""), 1, 0)
+        for col, txt in enumerate(column_labels):
+            lbl = QtWidgets.QLabel(txt)
+            lbl.setStyleSheet(_hs)
+            # Right-align so the column header sits directly above the
+            # right-aligned numeric value in the edit below it.
+            lbl.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignBottom)
+            cl.addWidget(lbl, 1, col + 1)
+
+        cake_lbl = QtWidgets.QLabel("Cake")
+        cake_lbl.setStyleSheet("font-weight: bold;")
+        cl.addWidget(cake_lbl, 2, 0)
+
+        self._single_cake_edits = {}
+        det = self._SINGLE_CAKE_DET
+        for col, key in enumerate(self.CAKE_KEYS):
+            e = QtWidgets.QLineEdit("")
+            e.setMinimumWidth(80)
+            e.setAlignment(QtCore.Qt.AlignRight)
+            e.setPlaceholderText("—")
+            cl.addWidget(e, 2, col + 1)
+            e.textEdited.connect(
+                lambda _txt, d=det, k=key, ed=e:
+                    self._on_cake_param_edited(d, k, ed))
+            e.editingFinished.connect(
+                lambda d=det, k=key, ed=e:
+                    self._on_cake_param_edited(d, k, ed))
+            self._single_cake_edits[key] = e
+
+        return w
 
     def _build_cake_widget(self):
         """Build the cake-parameter editor (Load/Save + per-GE edit rows).
@@ -848,6 +985,9 @@ class FFViewer(QtWidgets.QMainWindow):
         """Merged Image Settings + Display panel."""
         grp = QtWidgets.QGroupBox("Image & Display")
         lay = QtWidgets.QGridLayout(grp)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setVerticalSpacing(2)
+        lay.setHorizontalSpacing(4)
 
         # Row 0: pixel dimensions + frame
         lay.addWidget(QtWidgets.QLabel("Pixels H"), 0, 0)
@@ -902,11 +1042,19 @@ class FFViewer(QtWidgets.QMainWindow):
         self.sum_check = QtWidgets.QCheckBox("Sum/Frames")
         lay.addWidget(self.sum_check, 3, 3, 1, 3)
 
+        # Stretch row: absorbs the extra height the QHBoxLayout gives this
+        # panel (it's stretched to match the tallest sibling, Data Source),
+        # so the actual rows pack tightly at the top instead of spreading out.
+        lay.setRowStretch(4, 1)
+
         return grp
 
     def _build_processing_panel(self):
         grp = QtWidgets.QGroupBox("Detector & Rings")
         lay = QtWidgets.QGridLayout(grp)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setVerticalSpacing(2)
+        lay.setHorizontalSpacing(4)
 
         btn_rings = QtWidgets.QPushButton("Rings Material")
         btn_rings.clicked.connect(self._on_ring_selection)
@@ -935,6 +1083,9 @@ class FFViewer(QtWidgets.QMainWindow):
             "Image is rotated around (Beam Ctr Y, Beam Ctr Z) by -Tx to undo the tilt.\n"
             "Cursor R/η are reported in the corrected frame.")
         lay.addWidget(self.tx_edit, 4, 1)
+
+        # See _build_image_display_panel: same trick to keep rows packed at top.
+        lay.setRowStretch(5, 1)
 
         return grp
 
@@ -1167,6 +1318,13 @@ class FFViewer(QtWidgets.QMainWindow):
         self.h5dark_edit.editingFinished.connect(self._load_and_display)
         self.h5dark_edit.editingFinished.connect(lambda: setattr(self, '_h5dark_locked', True))
         self.h5data_edit.editingFinished.connect(lambda: setattr(self, '_h5data_locked', True))
+        # Live red-highlight when the dataset path doesn't exist in the file.
+        self.h5data_edit.textChanged.connect(self._validate_h5_paths)
+        self.h5dark_edit.textChanged.connect(self._validate_h5_paths)
+        if hasattr(self, '_multi_data_path_edit'):
+            self._multi_data_path_edit.textChanged.connect(self._validate_h5_paths)
+        if hasattr(self, '_multi_dark_path_edit'):
+            self._multi_dark_path_edit.textChanged.connect(self._validate_h5_paths)
         self.image_view.dataStatsUpdated.connect(self._on_stats_updated)
         # Movie mode: advance frame by 1 (wraps at max)
         self.image_view.movieFrameAdvance.connect(self._movie_advance_frame)
@@ -1343,6 +1501,114 @@ class FFViewer(QtWidgets.QMainWindow):
         if fn:
             self._apply_param_file(fn)
 
+    def _warn_multi_imtransopt(self, opts, source=''):
+        """Pop a warning when more than one non-zero ImTransOpt is specified.
+
+        The C analysis stream applies ImTransOpt entries in the literal order
+        given. The GUI display always applies transpose first, then HFlip and
+        VFlip combined. For non-commuting combinations (e.g. transpose+flip on
+        a non-square image, or specific orderings the user explicitly chose),
+        the displayed image may not exactly match what DetectorMapper /
+        IntegratorZarrOMP / PeaksFitting see. Single non-zero ops always agree.
+        """
+        active = [o for o in opts if o in (1, 2, 3)]
+        if len(active) <= 1:
+            return
+        names = {1: 'HFlip', 2: 'VFlip', 3: 'Transpose'}
+        seq = ' → '.join(f'{n}={names[n]}' for n in active)
+        QtWidgets.QMessageBox.warning(
+            self, "ImTransOpt: multiple operations",
+            f"{source + ': ' if source else ''}ImTransOpt has {len(active)} "
+            f"operations: {seq}.\n\n"
+            "MIDAS analysis applies these in the order shown. The viewer "
+            "applies transpose first, then HFlip/VFlip combined. For "
+            "combinations where order matters (e.g. transpose ↔ flip on a "
+            "non-square image), the displayed image may differ from what "
+            "the analysis stream sees.")
+
+    @staticmethod
+    def _h5_dataset_exists(file_path, dataset_path):
+        """Return True if dataset_path is in the H5 file at file_path.
+
+        Returns False if the file exists but the dataset does not.
+        Returns None when the answer is unknown (h5py missing, file missing,
+        path is empty, file open failed, etc.) so callers can leave the
+        UI styling alone instead of falsely flagging it red.
+        """
+        if not file_path or not dataset_path or h5py is None:
+            return None
+        if not os.path.exists(file_path):
+            return None
+        try:
+            with h5py.File(file_path, 'r') as f:
+                return dataset_path in f
+        except Exception:
+            return None
+
+    def _set_h5_invalid_style(self, edit, invalid):
+        """Light-red background when the dataset path is missing in the file."""
+        edit.setStyleSheet("background-color: #ff8a8a; color: black;"
+                           if invalid else "")
+
+    def _validate_h5_paths(self):
+        """Validate H5 dataset paths against current data/dark files.
+
+        Sets a red background on the H5 Data / H5 Dark line edits when their
+        dataset path doesn't exist in the corresponding loaded file. No-ops
+        when the file isn't loaded yet (path may still be valid once loaded).
+        """
+        # Single-mode fields
+        if hasattr(self, 'h5data_edit') and hasattr(self, 'h5dark_edit'):
+            data_fn = None
+            try:
+                data_fn = build_filename(
+                    self.folder, self.file_stem, self.first_file_nr,
+                    self.padding, self.det_nr, self.ext)
+            except Exception:
+                pass
+            res = self._h5_dataset_exists(data_fn, self.h5data_edit.text().strip())
+            self._set_h5_invalid_style(self.h5data_edit, res is False)
+
+            dark_fn = self.dark_fn or None
+            if not dark_fn:
+                try:
+                    cand = build_filename(
+                        self.dark_folder or self.folder, self.dark_stem,
+                        self.dark_num, self.padding, self.det_nr, self.ext)
+                    if os.path.exists(cand):
+                        dark_fn = cand
+                except Exception:
+                    pass
+            # If no dedicated dark file, the integrator looks inside the data
+            # file at the dark path, so validate against data_fn in that case.
+            check_against = dark_fn or data_fn
+            res = self._h5_dataset_exists(check_against,
+                                           self.h5dark_edit.text().strip())
+            self._set_h5_invalid_style(self.h5dark_edit, res is False)
+
+        # Multi-mode shared paths
+        if hasattr(self, '_multi_data_path_edit'):
+            data_path = self._multi_data_path_edit.text().strip()
+            invalid = False
+            for s in getattr(self, '_det_states', []):
+                if s.enabled and s.data_file and os.path.exists(s.data_file):
+                    if self._h5_dataset_exists(s.data_file, data_path) is False:
+                        invalid = True
+                        break
+            self._set_h5_invalid_style(self._multi_data_path_edit, invalid)
+        if hasattr(self, '_multi_dark_path_edit'):
+            dark_path = self._multi_dark_path_edit.text().strip()
+            invalid = False
+            for s in getattr(self, '_det_states', []):
+                if not s.enabled:
+                    continue
+                fn = s.dark_file or s.data_file
+                if fn and os.path.exists(fn):
+                    if self._h5_dataset_exists(fn, dark_path) is False:
+                        invalid = True
+                        break
+            self._set_h5_invalid_style(self._multi_dark_path_edit, invalid)
+
     def _apply_param_file(self, fn):
         """Read fn, populate GUI fields from MIDAS params, then reload."""
         try:
@@ -1495,8 +1761,10 @@ class FFViewer(QtWidgets.QMainWindow):
             self.temp_max_ring_rad = mr
 
         # ── Caking params (fallback when no CSV is present) ──
-        det = getattr(self, 'det_nr', 1)
-        cp = self.cake_params_per_det.setdefault(det, {})
+        # Use the same dict key the editor and overlay agree on, so a
+        # non-HYDRA single panel (det_nr = -1) doesn't end up writing to
+        # a different slot than _draw_caking will later read.
+        cp = self.cake_params_per_det.setdefault(self._active_cake_det(), {})
         for src_key, dst_key in [('RMin', 'R_MIN'), ('RMax', 'R_MAX'),
                                   ('RBinSize', 'R_STEP'), ('EtaMin', 'ETA_MIN'),
                                   ('EtaMax', 'ETA_MAX'), ('EtaBinSize', 'ETA_STEP')]:
@@ -1521,6 +1789,7 @@ class FFViewer(QtWidgets.QMainWindow):
             self.vflip_check.setChecked(2 in opts)
             self.transpose_check.setChecked(3 in opts)
             applied.append(f"ImTransOpt={opts}")
+            self._warn_multi_imtransopt(opts, source=os.path.basename(fn))
 
         # ── Frames per file ──
         nfs = get_int('NrFilesPerSweep', 'nFramesPerFile', 'NFramesPerFile')
@@ -1610,6 +1879,20 @@ class FFViewer(QtWidgets.QMainWindow):
                 for ax_name in ('left', 'bottom', 'right', 'top'):
                     try:
                         view.getAxis(ax_name).setTickFont(font)
+                    except Exception:
+                        pass
+            # The histogram (intensity colorbar) is its own LUT widget with
+            # its own axis — pyqtgraph doesn't propagate the main view's
+            # tick font there, so set it directly. Different pyqtgraph
+            # versions expose the axis as either hist.axis (proxied) or
+            # hist.item.axis (the underlying HistogramLUTItem).
+            hist = getattr(getattr(pg_iv, 'ui', None), 'histogram', None)
+            if hist is not None:
+                hist_axis = (getattr(hist, 'axis', None)
+                             or getattr(getattr(hist, 'item', None), 'axis', None))
+                if hist_axis is not None:
+                    try:
+                        hist_axis.setTickFont(font)
                     except Exception:
                         pass
         # pyqtgraph TextItems also don't pick up the stylesheet — redraw axes.
@@ -1798,6 +2081,11 @@ class FFViewer(QtWidgets.QMainWindow):
         self.multi_mode = checked
         self._file_stack.setCurrentIndex(1 if checked else 0)
         self.composite_combo.setEnabled(checked)
+        # Multi-det composite needs the X-flip ('br') so its stitched output
+        # reads in physical chirality; single-panel data is already correct
+        # under 'bl'. Switch before the redraw so overlays pick up the new
+        # origin in the same pass.
+        self.image_view.set_origin('br' if checked else 'bl')
         if checked:
             # Composite center = (BigDetSize/2, BigDetSize/2). Push that into
             # the BC fields so rings, lab axes, cursor R/η work in the lab
@@ -2375,6 +2663,7 @@ class FFViewer(QtWidgets.QMainWindow):
                 self.transpose_check.setChecked(3 in opts)
                 if opts:
                     print(f"  ImTransOpt: {opts}")
+                self._warn_multi_imtransopt(opts, source=os.path.basename(zip_path))
 
         print(f"Loaded ZIP: {zip_path}")
         self._load_and_display()
@@ -2561,6 +2850,8 @@ class FFViewer(QtWidgets.QMainWindow):
     def _load_and_display(self):
         """Load current frame and display."""
         self._sync_params()
+        # Re-check H5 dataset path validity now that any new file/path is in.
+        self._validate_h5_paths()
 
         # Multi-detector mode: composite the 4 detector frames into one image
         # in a worker thread, then go through the standard display path.
@@ -3003,6 +3294,8 @@ class FFViewer(QtWidgets.QMainWindow):
         # Update Data Source panel label and editable fields
         if hasattr(self, 'cake_label'):
             self.cake_label.setText(os.path.basename(fn))
+        if hasattr(self, 'single_cake_label'):
+            self.single_cake_label.setText(os.path.basename(fn))
         if hasattr(self, '_cake_edits'):
             self._populate_cake_edits()
 
@@ -3010,15 +3303,29 @@ class FFViewer(QtWidgets.QMainWindow):
             self._draw_caking()
 
     def _populate_cake_edits(self):
-        """Fill the cake parameter edit boxes from cake_params_per_det."""
+        """Fill the cake parameter edit boxes from cake_params_per_det.
+
+        Populates both the HYDRA 4-row editor and the single-mode 1-row
+        editor so the two stay in sync after Load Cake / programmatic update.
+        """
         for det in [1, 2, 3, 4]:
             p = self.cake_params_per_det.get(det, {})
             for key, edit in self._cake_edits[det].items():
                 val = p.get(key, '')
                 edit.setText(str(val) if val != '' else '')
+        # Single-mode editor mirrors det = _SINGLE_CAKE_DET.
+        if hasattr(self, '_single_cake_edits'):
+            p = self.cake_params_per_det.get(self._SINGLE_CAKE_DET, {})
+            for key, edit in self._single_cake_edits.items():
+                val = p.get(key, '')
+                edit.setText(str(val) if val != '' else '')
 
     def _on_cake_param_edited(self, det, key, edit):
-        """User edited a cake parameter field — update state and redraw."""
+        """User edited a cake parameter field — update state and redraw.
+
+        Mirrors the new value into the *other* editor's matching field so
+        the HYDRA 4-row and single-mode 1-row editors stay in sync.
+        """
         try:
             val = float(edit.text().strip())
         except ValueError:
@@ -3027,6 +3334,19 @@ class FFViewer(QtWidgets.QMainWindow):
         if prev == val:
             return  # nothing changed; skip redundant redraw
         self.cake_params_per_det[det][key] = val
+        # Sync the sibling editor's matching field (without triggering its
+        # textEdited signal again, which would loop).
+        siblings = []
+        if hasattr(self, '_cake_edits') and det in self._cake_edits:
+            siblings.append(self._cake_edits[det].get(key))
+        if (hasattr(self, '_single_cake_edits')
+                and det == self._SINGLE_CAKE_DET):
+            siblings.append(self._single_cake_edits.get(key))
+        for e2 in siblings:
+            if e2 is not None and e2 is not edit:
+                e2.blockSignals(True)
+                e2.setText(str(val))
+                e2.blockSignals(False)
         # Keep the per-GE inline status label (R=[..,..] η=[..,..] step=..) in sync
         if hasattr(self, '_det_widgets') and 1 <= det <= len(self._det_widgets):
             self._refresh_det_widget(det - 1)
@@ -3136,9 +3456,11 @@ class FFViewer(QtWidgets.QMainWindow):
             self._show_cake_overlay()
 
     def _update_cake_plot_button(self):
-        btn = getattr(self, '_cake_plot_btn', None)
-        if btn is not None:
-            btn.setText("Clear" if self.show_caking else "Plot")
+        label = "Clear" if self.show_caking else "Plot"
+        for attr in ('_cake_plot_btn', '_single_cake_plot_btn'):
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                btn.setText(label)
 
     def _draw_caking(self):
         """Draw caking sector overlays from cake_params_per_det."""
@@ -3156,11 +3478,12 @@ class FFViewer(QtWidgets.QMainWindow):
             det_list = [d for d in sorted(self.cake_params_per_det.keys())
                         if 1 <= d <= 4 and self._det_states[d - 1].enabled]
         else:
-            det_nr = getattr(self, 'det_nr', 1)
-            if det_nr in self.cake_params_per_det:
-                det_list = [det_nr]
-            else:
-                det_list = list(self.cake_params_per_det.keys())[:1]
+            # Single mode: always use the slot the editor and param-file
+            # fallback agree on (_SINGLE_CAKE_DET via _active_cake_det()).
+            # Previously this read self.det_nr, which on a non-HYDRA panel
+            # is -1 and pointed at a stale dict entry.
+            key = self._active_cake_det()
+            det_list = [key] if key in self.cake_params_per_det else []
 
         detectors = []
         for i, det in enumerate(det_list):
