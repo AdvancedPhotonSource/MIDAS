@@ -25,23 +25,71 @@ COLORMAPS = ['viridis', 'inferno', 'plasma', 'magma', 'turbo',
 
 # ── Theme ──────────────────────────────────────────────────────────────
 def apply_theme(app, theme='light'):
-    """Apply dark or light theme to the Qt application and PyQtGraph."""
+    """Apply dark or light theme to the Qt application and PyQtGraph.
+
+    Switching themes is idempotent: every palette role is set explicitly for
+    both light and dark, and top-level widgets are unpolished + repolished
+    so the new palette actually propagates (Fusion on Linux otherwise leaves
+    LineEdit/Button backgrounds at their previous theme's values).
+    """
     app.setStyle('Fusion')
+    pal = QtGui.QPalette()
+
     if theme == 'dark':
-        pal = QtGui.QPalette()
-        pal.setColor(QtGui.QPalette.Window, QtGui.QColor(30, 30, 30))
-        pal.setColor(QtGui.QPalette.WindowText, QtGui.QColor(220, 220, 220))
-        pal.setColor(QtGui.QPalette.Base, QtGui.QColor(25, 25, 25))
-        pal.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(40, 40, 40))
-        pal.setColor(QtGui.QPalette.Text, QtGui.QColor(220, 220, 220))
-        pal.setColor(QtGui.QPalette.Button, QtGui.QColor(50, 50, 50))
-        pal.setColor(QtGui.QPalette.ButtonText, QtGui.QColor(220, 220, 220))
-        pal.setColor(QtGui.QPalette.Highlight, QtGui.QColor(42, 130, 218))
-        app.setPalette(pal)
-        pg.setConfigOptions(background='k', foreground='w')
+        win, win_text   = QtGui.QColor(45, 45, 45),   QtGui.QColor(220, 220, 220)
+        base, alt_base  = QtGui.QColor(30, 30, 30),   QtGui.QColor(50, 50, 50)
+        text            = QtGui.QColor(220, 220, 220)
+        tip_bg, tip_fg  = QtGui.QColor(45, 45, 45),   QtGui.QColor(220, 220, 220)
+        btn, btn_text   = QtGui.QColor(60, 60, 60),   QtGui.QColor(220, 220, 220)
+        bright          = QtGui.QColor(255, 80, 80)
+        hl, hl_text     = QtGui.QColor(42, 130, 218), QtGui.QColor(255, 255, 255)
+        placeholder     = QtGui.QColor(150, 150, 150)
+        link            = QtGui.QColor(80, 160, 240)
+        disabled_text   = QtGui.QColor(127, 127, 127)
+        pg_bg, pg_fg    = 'k', 'w'
     else:
-        app.setPalette(app.style().standardPalette())
-        pg.setConfigOptions(background='w', foreground='k')
+        win, win_text   = QtGui.QColor(240, 240, 240), QtGui.QColor(0, 0, 0)
+        base, alt_base  = QtGui.QColor(255, 255, 255), QtGui.QColor(245, 245, 245)
+        text            = QtGui.QColor(0, 0, 0)
+        tip_bg, tip_fg  = QtGui.QColor(255, 255, 220), QtGui.QColor(0, 0, 0)
+        btn, btn_text   = QtGui.QColor(240, 240, 240), QtGui.QColor(0, 0, 0)
+        bright          = QtGui.QColor(255, 0, 0)
+        hl, hl_text     = QtGui.QColor(48, 140, 198),  QtGui.QColor(255, 255, 255)
+        placeholder     = QtGui.QColor(120, 120, 120)
+        link            = QtGui.QColor(0, 0, 255)
+        disabled_text   = QtGui.QColor(160, 160, 160)
+        pg_bg, pg_fg    = 'w', 'k'
+
+    pal.setColor(QtGui.QPalette.Window,           win)
+    pal.setColor(QtGui.QPalette.WindowText,       win_text)
+    pal.setColor(QtGui.QPalette.Base,             base)
+    pal.setColor(QtGui.QPalette.AlternateBase,    alt_base)
+    pal.setColor(QtGui.QPalette.Text,             text)
+    pal.setColor(QtGui.QPalette.ToolTipBase,      tip_bg)
+    pal.setColor(QtGui.QPalette.ToolTipText,      tip_fg)
+    pal.setColor(QtGui.QPalette.Button,           btn)
+    pal.setColor(QtGui.QPalette.ButtonText,       btn_text)
+    pal.setColor(QtGui.QPalette.BrightText,       bright)
+    pal.setColor(QtGui.QPalette.Highlight,        hl)
+    pal.setColor(QtGui.QPalette.HighlightedText,  hl_text)
+    pal.setColor(QtGui.QPalette.PlaceholderText,  placeholder)
+    pal.setColor(QtGui.QPalette.Link,             link)
+    pal.setColor(QtGui.QPalette.Disabled, QtGui.QPalette.Text,       disabled_text)
+    pal.setColor(QtGui.QPalette.Disabled, QtGui.QPalette.ButtonText, disabled_text)
+    pal.setColor(QtGui.QPalette.Disabled, QtGui.QPalette.WindowText, disabled_text)
+    app.setPalette(pal)
+
+    pg.setConfigOptions(background=pg_bg, foreground=pg_fg)
+
+    # Force every existing widget to repaint with the new palette. Without
+    # this, Fusion on Linux leaves QLineEdit/QPushButton/QSpinBox painted in
+    # the old palette's Base/Button colors until they are interacted with.
+    style = app.style()
+    for top in app.topLevelWidgets():
+        for w in [top] + top.findChildren(QtWidgets.QWidget):
+            style.unpolish(w)
+            style.polish(w)
+            w.update()
 
 
 def get_colormap(name):
@@ -285,10 +333,9 @@ class MIDASImageView(QtWidgets.QWidget):
         self._update_nav_buttons()
 
     def _nav_home(self):
-        """Reset view to full image extent."""
+        """Reset view to full image extent (image bounds only, no overlays)."""
         self._push_view()
-        vb = self._get_viewbox()
-        vb.autoRange()
+        self._fit_to_image()
         self._push_view()
 
     def _nav_back(self):
@@ -370,6 +417,7 @@ class MIDASImageView(QtWidgets.QWidget):
 
     def set_image_data(self, data, auto_levels=True, levels=None):
         """Set image data with smart percentile-based auto-levels."""
+        prev_shape = None if self._raw_data is None else self._raw_data.shape
         self._raw_data = data
         # Transpose: PyQtGraph maps axis-0→X, axis-1→Y, but numpy images
         # are (rows, cols). Transpose so rows→Y (vertical), cols→X (horizontal).
@@ -385,27 +433,64 @@ class MIDASImageView(QtWidgets.QWidget):
             dmin = dmax = p2 = p98 = 0.0
         self.dataStatsUpdated.emit(dmin, dmax, p2, p98)
 
+        # autoRange=False: keep the user's pan/zoom across frame changes
+        # and stop pyqtgraph from inflating the view to fit off-image
+        # overlays (rings outside the detector, lab-axis labels, …).
+        # We manually set a tight range below for fresh / shape-changed
+        # displays.
         if levels is not None:
             if self._log_mode:
                 levels = (np.log10(max(levels[0], 1e-10)),
                           np.log10(max(levels[1], 1e-10)))
-            self._iv.setImage(display, autoLevels=False, levels=levels)
+            self._iv.setImage(display, autoLevels=False, levels=levels,
+                              autoRange=False)
         elif auto_levels:
-            self._iv.setImage(display, autoLevels=False, levels=(p2, p98))
+            self._iv.setImage(display, autoLevels=False, levels=(p2, p98),
+                              autoRange=False)
         else:
-            self._iv.setImage(display, autoLevels=False)
+            self._iv.setImage(display, autoLevels=False, autoRange=False)
 
         # Force origin position AFTER setImage (which may reset axes)
-        vb = self._iv.getView()
-        if self._origin == 'bl':
-            vb.invertY(False)
-            vb.invertX(False)
-        elif self._origin == 'br':
-            vb.invertY(False)
-            vb.invertX(True)
+        self._apply_origin()
+
+        # Tight initial view: fit to image bounds with no padding so the
+        # data fills the canvas. Skip on same-shape redraws so the user's
+        # pan/zoom is preserved across frame changes.
+        if prev_shape is None or prev_shape != data.shape:
+            self._fit_to_image()
 
         # Push initial view to history
         self._push_view()
+
+    def _fit_to_image(self):
+        """Set view range to the current image bounds with no padding."""
+        if self._raw_data is None:
+            return
+        vb = self._iv.getView()
+        ny, nz = self._raw_data.shape  # data is (rows, cols) = (Y, X)
+        # display = data.T → (X, Y) = (nz, ny). View X spans [0, nz], Y [0, ny].
+        vb.setRange(xRange=(0, nz), yRange=(0, ny), padding=0)
+
+    def _apply_origin(self):
+        vb = self._iv.getView()
+        vb.invertY(False)
+        vb.invertX(self._origin == 'br')
+
+    def set_origin(self, origin):
+        """Switch display origin between 'bl' (no flip) and 'br' (mirror X).
+
+        Use 'bl' for single-panel data already in physical chirality and
+        'br' for the HYDRA composite, whose stitching introduces an X-axis
+        flip that needs cancelling at display time. Overlays branch on
+        ``_origin`` so they follow automatically on the next redraw.
+        """
+        if origin not in ('bl', 'br'):
+            raise ValueError(f"origin must be 'bl' or 'br', got {origin!r}")
+        if origin == self._origin:
+            return
+        self._origin = origin
+        if self._raw_data is not None:
+            self._apply_origin()
 
     def set_log_mode(self, enabled):
         """Toggle log10 display, preserving current view range and intensity levels."""
@@ -521,7 +606,11 @@ class MIDASImageView(QtWidgets.QWidget):
         self._iv.imageItem.setRect(QtCore.QRectF(*new_rect))
         self._last_image_rect = new_rect
         if rect_changed:
-            self._get_viewbox().autoRange()
+            # Fit to the image rect itself, not autoRange — overlays
+            # (rings outside the detector, lab-axis labels) would
+            # otherwise inflate the view and reintroduce blank margins.
+            vb = self._get_viewbox()
+            vb.setRange(xRange=(x, x + w), yRange=(y, y + h), padding=0)
 
     @property
     def scene(self):
