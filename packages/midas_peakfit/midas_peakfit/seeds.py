@@ -16,6 +16,7 @@ import numpy as np
 from midas_peakfit.connected import Region
 from midas_peakfit.geometry import calc_eta_angle, calc_eta_angle_np, RAD2DEG
 from midas_peakfit.panels import Panel, get_panel_index, apply_panel_correction
+from midas_peakfit.uncertainty import classify_peak_quality
 
 
 # 8-neighbor offsets matching C dx/dy
@@ -62,6 +63,22 @@ class SeededRegion:
     # Per-peak initial center (peakR, peakEta) and (maxY, maxZ) for outputs
     peak_R: np.ndarray  # float64, shape (n_peaks,) — initial seed R
     peak_Eta: np.ndarray  # float64, shape (n_peaks,) — initial seed Eta
+
+    # Per-peak background-subtracted integrated intensity (M_0 from
+    # Modregger 2025) and the photon-count regime quality flag. Always
+    # populated; cost is one sum over Voronoi pixels which is computed
+    # anyway during sigma seeding.
+    peak_M0: np.ndarray  # float64, shape (n_peaks,) — integrated counts
+    peak_quality: np.ndarray  # int8,  shape (n_peaks,) — 0/1/2 (see uncertainty.py)
+
+    # Optional higher moments along R and η. Populated only when
+    # ``seed_region(..., compute_moments=True)``; ``None`` in the default
+    # fast path. Used to derive Modregger shot-noise σ via
+    # ``uncertainty.compute_moment_sigma``.
+    peak_M2_R: Optional[np.ndarray] = None  # float64, shape (n_peaks,)
+    peak_M2_Eta: Optional[np.ndarray] = None
+    peak_M4_R: Optional[np.ndarray] = None
+    peak_M4_Eta: Optional[np.ndarray] = None
 
 
 def _per_pixel_r_eta(
@@ -184,10 +201,16 @@ def seed_region(
     int_sat: float,
     max_n_peaks: int,
     panels: List[Panel],
+    compute_moments: bool = False,
 ) -> Optional[SeededRegion]:
     """Build a fully-seeded ``SeededRegion`` ready for batched LM fitting.
 
     Returns ``None`` if the region should be skipped (saturated).
+
+    ``compute_moments``: if True, additionally populate ``peak_M2_R``,
+    ``peak_M2_Eta``, ``peak_M4_R``, ``peak_M4_Eta`` on the returned region
+    so that downstream code can derive Modregger 2025 shot-noise σ. The
+    M_0 and quality fields are populated unconditionally.
     """
     maxima = find_regional_maxima(region, img_corr, mask, int_sat, max_n_peaks)
     if maxima is None:
@@ -232,6 +255,16 @@ def seed_region(
     estimSigmaR = np.full(n_peaks, width, dtype=np.float64)
     estimSigmaEta = np.full(n_peaks, width, dtype=np.float64)
 
+    # Per-peak Voronoi-partitioned moments. ``sumW`` is M_0 (Modregger
+    # 2025); M_2 along R/η is (sumWR2/sumW), (sumWEta2/sumW) and is reused
+    # both as the initial Pseudo-Voigt sigma and as the input to the
+    # closed-form shot-noise σ. M_4 is computed only when requested.
+    sumW = np.zeros(n_peaks, dtype=np.float64)
+    sumWR2 = np.zeros(n_peaks, dtype=np.float64)
+    sumWEta2 = np.zeros(n_peaks, dtype=np.float64)
+    sumWR4 = np.zeros(n_peaks, dtype=np.float64) if compute_moments else None
+    sumWEta4 = np.zeros(n_peaks, dtype=np.float64) if compute_moments else None
+
     if pos_mask.any():
         Rs_p = Rs[pos_mask]
         Etas_p = Etas[pos_mask]
@@ -243,12 +276,14 @@ def seed_region(
         d2 = dR * dR + dE * dE
         closest = np.argmin(d2, axis=1)  # (P,)
 
-        sumW = np.zeros(n_peaks, dtype=np.float64)
-        sumWR2 = np.zeros(n_peaks, dtype=np.float64)
-        sumWEta2 = np.zeros(n_peaks, dtype=np.float64)
+        dR_c = Rs_p - peak_R[closest]
+        dE_c = Etas_p - peak_Eta[closest]
         np.add.at(sumW, closest, val_p)
-        np.add.at(sumWR2, closest, val_p * (Rs_p - peak_R[closest]) ** 2)
-        np.add.at(sumWEta2, closest, val_p * (Etas_p - peak_Eta[closest]) ** 2)
+        np.add.at(sumWR2, closest, val_p * dR_c * dR_c)
+        np.add.at(sumWEta2, closest, val_p * dE_c * dE_c)
+        if compute_moments:
+            np.add.at(sumWR4, closest, val_p * dR_c ** 4)
+            np.add.at(sumWEta4, closest, val_p * dE_c ** 4)
 
         ok = sumW > 0
         if ok.any():
@@ -258,6 +293,20 @@ def seed_region(
             sE = np.clip(sE, 0.1, None)
             estimSigmaR[ok] = sR
             estimSigmaEta[ok] = sE
+
+    # M_0 and quality flag (Modregger 2025 + paper Appendix A caveats).
+    peak_M0 = sumW.copy()
+    peak_quality = classify_peak_quality(peak_M0)
+
+    # Higher moments — normalize to M_n = Σw·δ^n / Σw, with NaN where M_0 ≤ 0.
+    if compute_moments:
+        safe_M0 = np.where(sumW > 0, sumW, 1.0)
+        peak_M2_R = np.where(sumW > 0, sumWR2 / safe_M0, np.nan)
+        peak_M2_Eta = np.where(sumW > 0, sumWEta2 / safe_M0, np.nan)
+        peak_M4_R = np.where(sumW > 0, sumWR4 / safe_M0, np.nan)
+        peak_M4_Eta = np.where(sumW > 0, sumWEta4 / safe_M0, np.nan)
+    else:
+        peak_M2_R = peak_M2_Eta = peak_M4_R = peak_M4_Eta = None
 
     # Build x0, xl, xu with shape (1 + 8*n_peaks,)
     n = 1 + 8 * n_peaks
@@ -325,6 +374,12 @@ def seed_region(
         xu=xu,
         peak_R=peak_R.astype(np.float64),
         peak_Eta=peak_Eta.astype(np.float64),
+        peak_M0=peak_M0,
+        peak_quality=peak_quality,
+        peak_M2_R=peak_M2_R,
+        peak_M2_Eta=peak_M2_Eta,
+        peak_M4_R=peak_M4_R,
+        peak_M4_Eta=peak_M4_Eta,
     )
 
 

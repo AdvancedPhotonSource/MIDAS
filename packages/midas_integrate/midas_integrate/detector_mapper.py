@@ -39,6 +39,7 @@ from midas_integrate.geometry import (
     REta_to_YZ_scalar,
     build_bin_edges,
     build_q_bin_edges_in_R,
+    build_tth_bin_edges_in_R,
     build_tilt_matrix,
     pixel_to_REta,
     pixel_bin_intersect,
@@ -406,6 +407,14 @@ def build_map(
         eta_lo = (params.EtaMin
                   + params.EtaBinSize * np.arange(n_eta_bins, dtype=np.float64))
         eta_hi = eta_lo + params.EtaBinSize
+    elif params.tth_mode_active:
+        r_lo, r_hi, _ = build_tth_bin_edges_in_R(
+            params.TthMin, params.TthMax, params.TthBinSize,
+            params.Lsd, px,
+        )
+        eta_lo = (params.EtaMin
+                  + params.EtaBinSize * np.arange(n_eta_bins, dtype=np.float64))
+        eta_hi = eta_lo + params.EtaBinSize
     else:
         r_lo, r_hi, eta_lo, eta_hi = build_bin_edges(
             params.RMin, params.EtaMin, n_r_bins, n_eta_bins,
@@ -692,8 +701,15 @@ def build_and_write_map(
             Lsd=params.Lsd, Ycen=params.BC_y, Zcen=params.BC_z,
             pxY=params.pxY, pxZ=params.pxZ,
             tx=params.tx, ty=params.ty, tz=params.tz,
-            p0=params.p0, p1=params.p1, p2=params.p2, p3=params.p3,
-            p4=params.p4, p6=params.p6,
+            # All 15 distortion coefficients — fix for the v1 bug that
+            # only hashed p0, p1, p2, p3, p4, p6 and silently used a
+            # stale Map.bin when any other coefficient changed.
+            p0=params.p0,   p1=params.p1,   p2=params.p2,
+            p3=params.p3,   p4=params.p4,   p5=params.p5,
+            p6=params.p6,   p7=params.p7,   p8=params.p8,
+            p9=params.p9,   p10=params.p10, p11=params.p11,
+            p12=params.p12, p13=params.p13, p14=params.p14,
+            Parallax=params.Parallax,
             RhoD=params.RhoD,
             RBinSize=params.RBinSize, EtaBinSize=params.EtaBinSize,
             RMin=params.RMin, RMax=params.RMax,

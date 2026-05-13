@@ -12,6 +12,7 @@ from midas_integrate.geometry import (
     REta_to_YZ_scalar,
     build_bin_edges,
     build_q_bin_edges_in_R,
+    build_tth_bin_edges_in_R,
     build_tilt_matrix,
     calc_eta_angle,
     circle_seg_intersect,
@@ -179,3 +180,85 @@ def test_q_mode_R_bins_monotonic():
     assert n == 90
     # R is monotonically increasing in Q
     assert np.all(np.diff(r_lo) > 0)
+
+
+def test_tth_mode_R_bins_match_tan_2theta():
+    """Equi-2theta bins map to R via R = (Lsd/px) * tan(2theta)."""
+    Lsd, px = 580_000.0, 172.0
+    r_lo, r_hi, n = build_tth_bin_edges_in_R(
+        TthMin=1.0, TthMax=15.0, TthBinSize=0.1,
+        Lsd=Lsd, px=px,
+    )
+    assert n == 140
+    # First edge: tan(1 deg) * Lsd/px
+    expected_first = Lsd / px * np.tan(np.radians(1.0))
+    np.testing.assert_allclose(r_lo[0], expected_first, rtol=1e-12)
+    # Last edge upper: tan(15 deg) * Lsd/px
+    expected_last = Lsd / px * np.tan(np.radians(15.0))
+    np.testing.assert_allclose(r_hi[-1], expected_last, rtol=1e-12)
+    # Edges are strictly monotonic in R since tan() is monotonic in
+    # (0, pi/2)
+    assert np.all(np.diff(r_lo) > 0)
+    assert np.all(np.diff(r_hi) > 0)
+
+
+def test_q_and_tth_modes_round_trip_through_2theta():
+    """Equi-Q and equi-2theta should produce the same R bin edges
+    when the Q grid is constructed from a uniform 2theta grid via the
+    Bragg formula --- a sanity check that both code paths agree on the
+    underlying R = (Lsd/px) tan(2theta) projection."""
+    Lsd, px, lam = 580_000.0, 172.0, 0.5
+    tth_min_deg, tth_max_deg, tth_step_deg = 1.0, 10.0, 0.1
+    # Build the 2theta grid directly.
+    r_lo_tth, r_hi_tth, n_tth = build_tth_bin_edges_in_R(
+        TthMin=tth_min_deg, TthMax=tth_max_deg, TthBinSize=tth_step_deg,
+        Lsd=Lsd, px=px,
+    )
+    # Convert the same 2theta endpoints to Q via Bragg.
+    q_min = 4.0 * np.pi * np.sin(np.radians(tth_min_deg) / 2.0) / lam
+    q_max = 4.0 * np.pi * np.sin(np.radians(tth_max_deg) / 2.0) / lam
+    # A non-uniform Q grid that lands on the same 2theta grid:
+    tth = np.radians(np.arange(tth_min_deg, tth_max_deg + 1e-9, tth_step_deg))
+    q_grid = 4.0 * np.pi * np.sin(tth / 2.0) / lam
+    # The Q grid above is non-uniform, so we cannot use it directly with
+    # build_q_bin_edges_in_R (which assumes uniform Q).  Instead we
+    # confirm the R edges of the equi-2theta grid map correctly to Q
+    # via the same Bragg formula:
+    q_lo_from_tth = 4.0 * np.pi * np.sin(
+        np.arctan(r_lo_tth * px / Lsd) / 2.0
+    ) / lam
+    np.testing.assert_allclose(q_lo_from_tth[0], q_min, rtol=1e-10)
+    np.testing.assert_allclose(q_lo_from_tth[-1], q_grid[-2], rtol=1e-10)
+
+
+def test_params_bin_axis_property_returns_correct_mode():
+    """The IntegrationParams.bin_axis property reports the active mode."""
+    from midas_integrate.params import IntegrationParams
+    base = dict(NrPixelsY=2048, NrPixelsZ=2048, Lsd=580_000.0,
+                pxY=172.0, pxZ=172.0,
+                EtaMin=-180.0, EtaMax=180.0, EtaBinSize=5.0)
+    p_r = IntegrationParams(RMin=10.0, RMax=1000.0, RBinSize=1.0, **base)
+    p_r.validate()
+    assert p_r.bin_axis == "R"
+    p_q = IntegrationParams(QMin=0.5, QMax=5.0, QBinSize=0.05,
+                             Wavelength=0.5, **base)
+    p_q.validate()
+    assert p_q.bin_axis == "Q"
+    p_tth = IntegrationParams(TthMin=1.0, TthMax=15.0, TthBinSize=0.1, **base)
+    p_tth.validate()
+    assert p_tth.bin_axis == "tth"
+
+
+def test_params_q_and_tth_modes_mutually_exclusive():
+    """Setting both Q-mode and 2theta-mode must raise."""
+    from midas_integrate.params import IntegrationParams
+    p = IntegrationParams(
+        NrPixelsY=2048, NrPixelsZ=2048, Lsd=580_000.0,
+        pxY=172.0, pxZ=172.0,
+        EtaMin=-180.0, EtaMax=180.0, EtaBinSize=5.0,
+        QMin=0.5, QMax=5.0, QBinSize=0.05, Wavelength=0.5,
+        TthMin=1.0, TthMax=15.0, TthBinSize=0.1,
+    )
+    import pytest
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        p.validate()

@@ -266,6 +266,11 @@ int setGlobalOpts(char *inputFN, GLOBAL_CONFIG_OPTS *recon_info_record) {
   recon_info_record->stripeSnr = 3.0f;
   recon_info_record->stripeLaSize = 61;
   recon_info_record->stripeSmSize = 21;
+  recon_info_record->n_cleanup_configs = 1;
+  recon_info_record->cleanup_snr_values = NULL;
+  recon_info_record->cleanup_la_values = NULL;
+  recon_info_record->cleanup_sm_values = NULL;
+  recon_info_record->stripeConfigFile[0] = '\0';
   while (fgets(aline, 4096, fileParam) != NULL) {
     if (strncmp(aline, "saveReconSeparate", strlen("saveReconSeparate")) == 0) {
       int val;
@@ -349,8 +354,80 @@ int setGlobalOpts(char *inputFN, GLOBAL_CONFIG_OPTS *recon_info_record) {
     if (strncmp(aline, "stripeSmSize", strlen("stripeSmSize")) == 0) {
       sscanf(aline, "%s %d", dummy, &recon_info_record->stripeSmSize);
     }
+    if (strncmp(aline, "stripeConfigFile", strlen("stripeConfigFile")) == 0) {
+      sscanf(aline, "%s %s", dummy, recon_info_record->stripeConfigFile);
+    }
   }
   fclose(fileParam);
+
+  /* Cleanup parameter sweep: if a config file is provided and stripe removal
+   * is enabled, parse it. Each non-comment / non-blank line is
+   *   <snr>  <la_size>  <sm_size>
+   * A row of (0, 0, 0) means "no cleanup" (baseline). Otherwise sm/la are
+   * forced to odd. */
+  if (recon_info_record->doStripeRemoval &&
+      recon_info_record->stripeConfigFile[0] != '\0') {
+    FILE *fcfg = fopen(recon_info_record->stripeConfigFile, "r");
+    if (fcfg == NULL) {
+      fprintf(stderr, "Could not open stripeConfigFile: %s\n",
+              recon_info_record->stripeConfigFile);
+      return 1;
+    }
+    /* First pass: count usable lines. */
+    int n_cfg = 0;
+    while (fgets(aline, 4096, fcfg) != NULL) {
+      char *p = aline;
+      while (*p == ' ' || *p == '\t') p++;
+      if (*p == '#' || *p == '\n' || *p == '\0') continue;
+      n_cfg++;
+    }
+    if (n_cfg < 1) {
+      fprintf(stderr, "stripeConfigFile %s has no usable rows\n",
+              recon_info_record->stripeConfigFile);
+      fclose(fcfg);
+      return 1;
+    }
+    rewind(fcfg);
+    recon_info_record->n_cleanup_configs = n_cfg;
+    recon_info_record->cleanup_snr_values =
+        (float *)malloc(sizeof(float) * n_cfg);
+    recon_info_record->cleanup_la_values = (int *)malloc(sizeof(int) * n_cfg);
+    recon_info_record->cleanup_sm_values = (int *)malloc(sizeof(int) * n_cfg);
+    if (!recon_info_record->cleanup_snr_values ||
+        !recon_info_record->cleanup_la_values ||
+        !recon_info_record->cleanup_sm_values) {
+      fprintf(stderr, "Out of memory parsing stripeConfigFile\n");
+      fclose(fcfg);
+      return 1;
+    }
+    int idx = 0;
+    while (fgets(aline, 4096, fcfg) != NULL && idx < n_cfg) {
+      char *p = aline;
+      while (*p == ' ' || *p == '\t') p++;
+      if (*p == '#' || *p == '\n' || *p == '\0') continue;
+      float snr;
+      int la, sm;
+      if (sscanf(p, "%f %d %d", &snr, &la, &sm) != 3) {
+        fprintf(stderr, "Bad line in stripeConfigFile: %s", aline);
+        fclose(fcfg);
+        return 1;
+      }
+      if (snr <= 0.0f) {
+        /* baseline: snr<=0 means skip cleanup for this config */
+        snr = 0.0f;
+        la = 0;
+        sm = 0;
+      } else {
+        if (la % 2 == 0) la += 1;
+        if (sm % 2 == 0) sm += 1;
+      }
+      recon_info_record->cleanup_snr_values[idx] = snr;
+      recon_info_record->cleanup_la_values[idx] = la;
+      recon_info_record->cleanup_sm_values[idx] = sm;
+      idx++;
+    }
+    fclose(fcfg);
+  }
   if (arbThetas == 0) {
     recon_info_record->theta_list_size =
         abs((recon_info_record->end_angle - recon_info_record->start_angle) /
@@ -469,11 +546,31 @@ int setGlobalOpts(char *inputFN, GLOBAL_CONFIG_OPTS *recon_info_record) {
   printf("\n");
   printf("    Stripe Removal  : %s",
          recon_info_record->doStripeRemoval ? "Yes" : "No");
-  if (recon_info_record->doStripeRemoval)
-    printf(" (snr=%.1f, la=%d, sm=%d)", recon_info_record->stripeSnr,
-           recon_info_record->stripeLaSize, recon_info_record->stripeSmSize);
+  if (recon_info_record->doStripeRemoval) {
+    if (recon_info_record->n_cleanup_configs > 1) {
+      printf(" SWEEP over %d configs (file: %s)",
+             recon_info_record->n_cleanup_configs,
+             recon_info_record->stripeConfigFile);
+    } else {
+      printf(" (snr=%.1f, la=%d, sm=%d)", recon_info_record->stripeSnr,
+             recon_info_record->stripeLaSize, recon_info_record->stripeSmSize);
+    }
+  }
   printf("\n");
   printf("========================================================\n\n");
+  if (recon_info_record->doStripeRemoval &&
+      recon_info_record->n_cleanup_configs > 1) {
+    int ci;
+    printf("  Cleanup configurations:\n");
+    printf("    idx     snr    la_size   sm_size\n");
+    for (ci = 0; ci < recon_info_record->n_cleanup_configs; ci++) {
+      printf("    %3d   %5.2f   %7d   %7d\n", ci,
+             recon_info_record->cleanup_snr_values[ci],
+             recon_info_record->cleanup_la_values[ci],
+             recon_info_record->cleanup_sm_values[ci]);
+    }
+    printf("\n");
+  }
 
   return 0;
 }
@@ -569,6 +666,24 @@ void setSinoSize(LOCAL_CONFIG_OPTS *information,
       (float *)malloc(sizeof(float) * information->sinogram_adjusted_xdim);
   information->low_pass_sino_lines_data =
       (float *)malloc(sizeof(float) * information->sinogram_adjusted_xdim);
+}
+
+/* Counterpart to setSinoSize — releases the per-thread buffers it allocated.
+ * Safe to call multiple times only if you re-NULL the pointers; in practice
+ * we call it exactly once at end of each thread's lifetime. */
+void freeSinoBuffers(LOCAL_CONFIG_OPTS *information) {
+  if (information->shifted_recon) free(information->shifted_recon);
+  if (information->shifted_sinogram) free(information->shifted_sinogram);
+  if (information->sinograms_boundary_padding)
+    free(information->sinograms_boundary_padding);
+  if (information->reconstructions_boundary_padding)
+    free(information->reconstructions_boundary_padding);
+  if (information->recon_calc_buffer) free(information->recon_calc_buffer);
+  if (information->sino_calc_buffer) free(information->sino_calc_buffer);
+  if (information->mean_vect) free(information->mean_vect);
+  if (information->mean_sino_line_data) free(information->mean_sino_line_data);
+  if (information->low_pass_sino_lines_data)
+    free(information->low_pass_sino_lines_data);
 }
 
 int readSino(int sliceNr, const GLOBAL_CONFIG_OPTS *recon_info_record,
@@ -1238,19 +1353,30 @@ void getRecons(LOCAL_CONFIG_OPTS *information,
   }
 }
 
-int writeRecon(int sliceNr, LOCAL_CONFIG_OPTS *information,
+int writeRecon(int sliceNr, int slicePos, LOCAL_CONFIG_OPTS *information,
                const GLOBAL_CONFIG_OPTS *recon_info_record, int shiftNr,
-               int fd) {
-  // The results are in information.recon_calc_buffer
-  // Output file: float with reconstruction_xdim*reconstruction_xdim size
+               int cleanupNr, int fd) {
+  /* sliceNr is the actual slice index from slices_to_process[] — used only
+   * for per-file naming when saveReconSeparate==1, since users want the
+   * physical slice number in those filenames.
+   * slicePos is the slice's position WITHIN slices_to_process[] (0..n_slices-1)
+   * — used for the binary-offset calculation so a slice subset still packs
+   * tightly into a (cleanup, shift, slice) cube without holes. */
   if (recon_info_record->saveReconSeparate == 1) {
     char outFileName[4096];
-    sprintf(outFileName,
-            "%s_slice_%05d_shift_%03d_XDim_%06d_YDim_%06d_float32.bin",
-            recon_info_record->ReconFileName, sliceNr, shiftNr,
-            recon_info_record->reconstruction_xdim,
-            recon_info_record->reconstruction_xdim);
-    //~ printf("Writing SliceNr: %d at %s\n",sliceNr,outFileName);
+    if (recon_info_record->n_cleanup_configs > 1) {
+      sprintf(outFileName,
+              "%s_cleanup_%03d_slice_%05d_shift_%03d_XDim_%06d_YDim_%06d_float32.bin",
+              recon_info_record->ReconFileName, cleanupNr, sliceNr, shiftNr,
+              recon_info_record->reconstruction_xdim,
+              recon_info_record->reconstruction_xdim);
+    } else {
+      sprintf(outFileName,
+              "%s_slice_%05d_shift_%03d_XDim_%06d_YDim_%06d_float32.bin",
+              recon_info_record->ReconFileName, sliceNr, shiftNr,
+              recon_info_record->reconstruction_xdim,
+              recon_info_record->reconstruction_xdim);
+    }
     FILE *out = fopen(outFileName, "wb");
     if (out == NULL) {
       printf("Could not open output file.\n");
@@ -1260,16 +1386,19 @@ int writeRecon(int sliceNr, LOCAL_CONFIG_OPTS *information,
            information->reconstruction_size, out);
     fclose(out);
   } else {
-    // OutputFileName already opened in fd
-    // File:
-    // {recon_info_record->ReconFileName}_NrSlices_05d_NrShifts_03d_XDim_06d_YDim_06d_float32.bin
-    // How to save: For each shiftNr: sliceNr
-
-    // Calculate offset
+    /* OutputFileName already opened in fd.
+     * Layout when n_cleanup_configs > 1: (cleanup, shift, slicePos, Y, X)
+     * Layout when n_cleanup_configs == 1: (shift, slicePos, Y, X)
+     * For slicesToProcess=-1 (all slices) slicePos == sliceNr so layout is
+     * unchanged from the historical behavior. */
     size_t OffsetHere = sizeof(float) * information->reconstruction_size;
-    OffsetHere *= shiftNr * (recon_info_record->n_slices) + sliceNr;
+    size_t shiftSliceIdx =
+        (size_t)shiftNr * (size_t)recon_info_record->n_slices +
+        (size_t)slicePos;
+    size_t cleanupStride = (size_t)recon_info_record->n_shifts *
+                           (size_t)recon_info_record->n_slices;
+    OffsetHere *= (size_t)cleanupNr * cleanupStride + shiftSliceIdx;
 
-    // No critical section needed for pwrite with non-overlapping regions
     int rc =
         pwrite(fd, information->recon_calc_buffer,
                sizeof(float) * information->reconstruction_size, OffsetHere);
@@ -1277,7 +1406,6 @@ int writeRecon(int sliceNr, LOCAL_CONFIG_OPTS *information,
       printf("Could not write to output file.\n");
       return 1;
     }
-    // Do not close fd here
   }
   return 0;
 }

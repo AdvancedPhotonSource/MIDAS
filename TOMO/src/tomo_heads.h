@@ -123,6 +123,18 @@ typedef struct {
   float stripeSnr;
   int stripeLaSize;
   int stripeSmSize;
+  /* Cleanup parameter sweep.
+   * When stripeConfigFile is non-empty AND doStripeRemoval is on, the engine
+   * sweeps over n_cleanup_configs (snr, la, sm) triplets and writes a 5-D
+   * output cube of shape (n_cleanup_configs, n_shifts, n_slices, X, Y).
+   * Defaults: n_cleanup_configs = 1 (legacy single-config behavior).
+   * A row of (0, 0, 0) in the config file is treated as the no-cleanup
+   * baseline (stripe removal is skipped for that config). */
+  int n_cleanup_configs;
+  float *cleanup_snr_values;
+  int *cleanup_la_values;
+  int *cleanup_sm_values;
+  char stripeConfigFile[4096];
   long sizeMatrices;
 } GLOBAL_CONFIG_OPTS;
 
@@ -145,6 +157,7 @@ typedef struct {
 int setGlobalOpts(char inputFile[], GLOBAL_CONFIG_OPTS *recon_info_record);
 void setSinoSize(LOCAL_CONFIG_OPTS *information,
                  const GLOBAL_CONFIG_OPTS *recon_info_record);
+void freeSinoBuffers(LOCAL_CONFIG_OPTS *information);
 void setReadStructSize(GLOBAL_CONFIG_OPTS *recon_info_record);
 void memsets(LOCAL_CONFIG_OPTS *information,
              const GLOBAL_CONFIG_OPTS *recon_info_record);
@@ -187,9 +200,9 @@ void reconCentering(LOCAL_CONFIG_OPTS *information,
 void getRecons(LOCAL_CONFIG_OPTS *information,
                const GLOBAL_CONFIG_OPTS *recon_info_record,
                gridrecParams *param, size_t offsetRecons);
-int writeRecon(int sliceNr, LOCAL_CONFIG_OPTS *information,
+int writeRecon(int sliceNr, int slicePos, LOCAL_CONFIG_OPTS *information,
                const GLOBAL_CONFIG_OPTS *recon_info_record, int shiftNr,
-               int fd);
+               int cleanupNr, int fd);
 void createPlanFile(GLOBAL_CONFIG_OPTS *recon_info_record);
 
 // GPU-accelerated reconstruction (only available when built with CUDA)

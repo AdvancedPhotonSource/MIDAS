@@ -82,6 +82,53 @@ midas-integrate-server params.txt --device cuda --num-streams 4
 | C MIDAS CPU (per the paper)                  | ~262 fps         |
 | pyFAI CSR-cython (per the paper)             | ~7 fps           |
 
+## Using a calibration from `midas-calibrate-v2`
+
+`midas-calibrate-v2` (the differentiable Bayesian rewrite of the
+calibration framework) exposes parameters under canonical names
+(`iso_R2`, `iso_R4`, `iso_R6`, `a1`/`phi1`, …, `a6`/`phi6`) instead of
+v1's `p0`..`p14`. Two routes exist for getting a v2 result into this
+package:
+
+```python
+# (a) In-memory: drop the v2 unpacked dict straight onto a v1 template
+from midas_integrate.params import parse_params
+from midas_integrate.compat.from_v2 import params_from_v2_unpacked
+
+template = parse_params("seed_paramstest.txt")  # carries binning, masks, …
+ip = params_from_v2_unpacked(res.unpacked, template=template)
+```
+
+```python
+# (b) High-level: spline + δr_k sidecars + paramstest in one call
+from midas_calibrate_v2.compat.to_integrate import to_integrate_params
+
+ip = to_integrate_params(
+    res,                      # PVCalibrationResult or FourStageResult
+    template=template,
+    output_dir="./integrate_in",
+    ring_d_spacing_A=ring_d, ring_two_theta_deg=ring_tt,  # for δr_k JSON
+)
+```
+
+What the adapter does for you:
+
+- Remaps `iso_R*` / `a*` / `phi*` to v1's `p0`..`p14` slots.
+- Carries `Lsd`, `BC_y/BC_z`, `tx/ty/tz`, `Parallax`, `pxY/pxZ`,
+  `Wavelength` through unchanged.
+- Warns when v2-only parameters are dropped (per-panel blocks → use
+  `midas_calibrate_v2.compat.to_v1.write_panel_shifts_file`; per-ring
+  `δr_k` → use the JSON sidecar from `to_integrate_params` and apply at
+  the peak-fit / Rietveld stage, since v1's radial map has no per-ring
+  concept).
+- For a `FourStageResult`, evaluates the Stage 4 thin-plate spline on
+  the detector grid and writes the binary `ΔR(Y, Z)` lookup that
+  `IntegrationParams.ResidualCorrectionMap` consumes.
+
+The cache hash (`Map.bin` / `nMap.bin`) covers all 15 distortion
+coefficients and `Parallax` / `Wavelength` unconditionally, so changing
+any v2 parameter will correctly invalidate stale caches.
+
 ## Requirements
 
 - Python ≥ 3.9

@@ -11,7 +11,9 @@ Functions are written in two flavors where it matters:
   pixel). These accept numpy arrays and broadcast.
 
 The tilt + 15-parameter distortion model is the canonical MIDAS forward
-transform. Q-mode binning is supported via ``build_q_bin_edges_in_R``.
+transform. Bins can be equi-spaced in radial pixels (default), in
+2θ via :func:`build_tth_bin_edges_in_R`, or in momentum transfer Q
+via :func:`build_q_bin_edges_in_R`.
 """
 from __future__ import annotations
 
@@ -438,6 +440,31 @@ def build_q_bin_edges_in_R(
     two_theta_hi = 2.0 * np.arcsin(np.clip(q_hi * wavelength_A / (4.0 * math.pi), -1, 1))
     r_lo = (Lsd / px) * np.tan(two_theta_lo)
     r_hi = (Lsd / px) * np.tan(two_theta_hi)
+    return r_lo, r_hi, n_r
+
+
+def build_tth_bin_edges_in_R(
+    TthMin: float, TthMax: float, TthBinSize: float,
+    Lsd: float, px: float,
+):
+    """Compute non-uniform R bin edges that correspond to a uniform 2θ grid.
+
+    The (R, 2θ) relation is the standard powder-diffraction projection
+    onto a planar detector::
+
+        R = (Lsd / px) tan(2θ)
+
+    Inputs are in degrees; returned ``r_lo``, ``r_hi`` are in pixel
+    units, alongside the matching ``n_r_bins``.  Wavelength-independent
+    by construction --- a calibrant-free choice when the user wants to
+    bin in scattering angle rather than radial position or momentum
+    transfer.
+    """
+    n_r = int(math.ceil((TthMax - TthMin) / TthBinSize))
+    tth_lo = TthMin + TthBinSize * np.arange(n_r, dtype=np.float64)
+    tth_hi = tth_lo + TthBinSize
+    r_lo = (Lsd / px) * np.tan(np.radians(tth_lo))
+    r_hi = (Lsd / px) * np.tan(np.radians(tth_hi))
     return r_lo, r_hi, n_r
 
 

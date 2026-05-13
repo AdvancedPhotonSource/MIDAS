@@ -107,7 +107,12 @@ def compute_param_hash(
     *,
     Lsd: float, Ycen: float, Zcen: float, pxY: float, pxZ: float,
     tx: float, ty: float, tz: float,
-    p0: float, p1: float, p2: float, p3: float, p4: float, p6: float,
+    p0: float = 0.0, p1: float = 0.0, p2: float = 0.0,
+    p3: float = 0.0, p4: float = 0.0, p5: float = 0.0,
+    p6: float = 0.0, p7: float = 0.0, p8: float = 0.0,
+    p9: float = 0.0, p10: float = 0.0, p11: float = 0.0,
+    p12: float = 0.0, p13: float = 0.0, p14: float = 0.0,
+    Parallax: float = 0.0,
     RhoD: float,
     RBinSize: float, EtaBinSize: float,
     RMin: float, RMax: float, EtaMin: float, EtaMax: float,
@@ -116,10 +121,24 @@ def compute_param_hash(
     qMode: int = 0,
     Wavelength: float = 0.0,
 ) -> bytes:
-    """Reproduce ``map_header_compute`` in MapHeader.h.
+    """Canonical SHA-256 parameter hash for Map.bin cache invalidation.
 
-    Builds the canonical alphabetical parameter string and hashes with SHA-256.
-    Used for parameter-drift detection — not for security.
+    Builds an alphabetised "key=value|..." string and hashes it with SHA-256.
+    Used for parameter-drift detection — NOT for security.
+
+    History.  The original MIDAS C implementation
+    (``map_header_compute`` in MapHeader.h) hashed only six of the fifteen
+    distortion coefficients (``p0, p1, p2, p3, p4, p6``) and only included
+    ``Wavelength`` when ``qMode``.  After the v2 calibration refactor
+    routinely refines ALL fifteen coefficients (and any of pxY/pxZ/Wavelength
+    via the prior-aware S5 protocol), changing one of the previously-omitted
+    parameters silently produced a stale Map.bin.
+
+    This implementation hashes ALL fifteen distortion coefficients,
+    ``Parallax``, and ``Wavelength`` unconditionally, so any v2 calibration
+    parameter change correctly invalidates the cache.  Callers that only
+    pass the legacy six p-coefficients still work (the rest default to 0.0)
+    but every existing Map.bin will be rebuilt on first run after this fix.
     """
     parts = [
         f"BC={Ycen:.6f},{Zcen:.6f}",
@@ -129,22 +148,23 @@ def compute_param_hash(
         f"Lsd={Lsd:.6f}",
         f"NrPixelsY={NrPixelsY}",
         f"NrPixelsZ={NrPixelsZ}",
+        f"Parallax={Parallax:.6f}",
         f"RBinSize={RBinSize:.6f}",
         f"RMax={RMax:.6f}",
         f"RMin={RMin:.6f}",
         f"RhoD={RhoD:.6f}",
         f"TransOpt={len(TransOpt)}",
+        f"Wavelength={Wavelength:.8f}",
     ]
     head = "|".join(parts)
     for t in TransOpt[:10]:
         head += f",{int(t)}"
     tail_parts = [
-        f"p0={p0:.6f}",
-        f"p1={p1:.6f}",
-        f"p2={p2:.6f}",
-        f"p3={p3:.6f}",
-        f"p4={p4:.6f}",
-        f"p6={p6:.6f}",
+        f"p0={p0:.6f}",   f"p1={p1:.6f}",   f"p2={p2:.6f}",
+        f"p3={p3:.6f}",   f"p4={p4:.6f}",   f"p5={p5:.6f}",
+        f"p6={p6:.6f}",   f"p7={p7:.6f}",   f"p8={p8:.6f}",
+        f"p9={p9:.6f}",   f"p10={p10:.6f}", f"p11={p11:.6f}",
+        f"p12={p12:.6f}", f"p13={p13:.6f}", f"p14={p14:.6f}",
         f"pxY={pxY:.6f}",
         f"pxZ={pxZ:.6f}",
         f"tx={tx:.6f}",
@@ -153,7 +173,7 @@ def compute_param_hash(
     ]
     full = head + "|" + "|".join(tail_parts)
     if qMode:
-        full += f"|qMode=1|Wavelength={Wavelength:.8f}"
+        full += "|qMode=1"
     return hashlib.sha256(full.encode("ascii")).digest()
 
 

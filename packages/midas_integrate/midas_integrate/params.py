@@ -60,6 +60,12 @@ class IntegrationParams:
     QBinSize: float = 0.0
     Wavelength: float = 0.0    # Å
 
+    # 2θ-mode (overrides R bins if all of these are set; mutually
+    # exclusive with Q-mode).  Units: degrees.
+    TthMin: float = 0.0
+    TthMax: float = 0.0
+    TthBinSize: float = 0.0
+
     # ── Mapping options ──────────────────────────────────────────────────
     Normalize: int = 1
     SumImages: int = 0
@@ -117,6 +123,10 @@ class IntegrationParams:
     def n_r_bins(self) -> int:
         if self.q_mode_active:
             return int(math.ceil((self.QMax - self.QMin) / self.QBinSize))
+        if self.tth_mode_active:
+            return int(math.ceil(
+                (self.TthMax - self.TthMin) / self.TthBinSize
+            ))
         return int(math.ceil((self.RMax - self.RMin) / self.RBinSize))
 
     @property
@@ -133,6 +143,23 @@ class IntegrationParams:
                 and self.QMin > 0 and self.QMax > 0)
 
     @property
+    def tth_mode_active(self) -> bool:
+        return (self.TthBinSize > 0
+                and self.TthMax > self.TthMin >= 0.0)
+
+    @property
+    def bin_axis(self) -> str:
+        """``"R"`` (default), ``"Q"``, or ``"tth"`` --- the radial axis on
+        which bin edges are equi-spaced.  Q-mode and 2theta-mode are
+        opt-in via ``QBinSize`` / ``TthBinSize`` respectively, and
+        mutually exclusive (enforced by :meth:`validate`)."""
+        if self.q_mode_active:
+            return "Q"
+        if self.tth_mode_active:
+            return "tth"
+        return "R"
+
+    @property
     def n_pixels(self) -> int:
         return self.NrPixelsY * self.NrPixelsZ
 
@@ -143,6 +170,12 @@ class IntegrationParams:
             )
         if self.Lsd <= 0 or self.pxY <= 0:
             raise ValueError(f"Lsd/pxY invalid ({self.Lsd}, {self.pxY})")
+        if self.q_mode_active and self.tth_mode_active:
+            raise ValueError(
+                "Q-mode (QBinSize>0) and 2theta-mode (TthBinSize>0) are "
+                "mutually exclusive; set exactly one (or neither for "
+                "default equi-R binning)."
+            )
         if self.n_r_bins <= 0 or self.n_eta_bins <= 0:
             raise ValueError(
                 f"Invalid bins: nR={self.n_r_bins}, nEta={self.n_eta_bins}"
@@ -185,6 +218,9 @@ _KEY_HANDLERS = {
     "QMax":             ("QMax",             float),
     "QBinSize":         ("QBinSize",         float),
     "Wavelength":       ("Wavelength",       float),
+    "TthMin":           ("TthMin",           float),
+    "TthMax":           ("TthMax",           float),
+    "TthBinSize":       ("TthBinSize",       float),
     # mapping options
     "Normalize":        ("Normalize",        int),
     "SumImages":        ("SumImages",        int),

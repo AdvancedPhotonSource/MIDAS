@@ -28,6 +28,7 @@ MIDAS TOMO reconstructs absorption-contrast cross-sections from rotation-series 
 - **Rotation-axis shift search** — reconstructs at multiple candidate center positions to find optimal alignment.
 - **Ring artifact removal** — sinogram-space filtering to suppress ring artifacts from detector pixel defects.
 - **Stripe artifact removal** — Vo et al. (2018) algorithms: dead pixel correction, large stripe normalization, small-medium stripe correction. Controlled by `doStripeRemoval`, `stripeSnr`, `stripeLaSize`, `stripeSmSize` parameters.
+- **Cleanup parameter sweep** — sweep over Vo `(snr, la, sm)` triples in a single MIDAS_TOMO call via the `stripeConfigFile` keyword. Python wrapper `run_tomo_cleanup_sweep()` and the `process_hdf.py --tuneCleanup` CLI flag automate slab-tuning and auto-pick the best config by a ring-strength metric.
 - **GPU-accelerated reconstruction** — CUDA-accelerated gridrec via `tomo_gpu.cu` with multi-pair batched reconstruction, double-buffered pipeline, pinned memory, and 3-stream overlap.
 - **mmap-based I/O** — both CPU and GPU paths use mmap for sinogram input (zero-copy parallel reads).
 - **OpenMP parallelism** — multi-threaded slice reconstruction.
@@ -38,20 +39,27 @@ MIDAS TOMO reconstructs absorption-contrast cross-sections from rotation-series 
 
 | Script | Input | Use Case |
 |--------|-------|----------|
-| `process_hdf.py` | HDF5 file with `/exchange/data` layout | Standard APS data exchange format. Auto-discovers dark/white frames. |
-| `midas_tomo_python.py` | NumPy arrays (dark, whites, projections) | Programmatic / Jupyter / custom data formats. |
+| `process_hdf.py` | HDF5 file with `/exchange/data` layout | Standard APS data exchange format. Auto-discovers dark/white frames. Supports `--tuneCleanup`, `--cleanup`, `--noCleanup`, `--shifts` flags. |
+| `midas_tomo_python.py` | NumPy arrays (dark, whites, projections) | Programmatic / Jupyter / custom data formats. Provides `run_tomo()`, `run_tomo_from_sinos()`, and `run_tomo_cleanup_sweep()`. |
 
 Both generate a parameter file and call the `MIDAS_TOMO` C binary.
 
 ### Usage
 
 ```bash
-# From an APS HDF5 file:
-python process_hdf.py -fn data.h5 -nCPUs 10
+# From an APS HDF5 file (defaults, no cleanup tuning):
+python process_hdf.py -dataFN data.h5 -nCPUs 10
+
+# With auto-tuned Vo stripe-removal parameters:
+python process_hdf.py -dataFN data.h5 -nCPUs 10 --tuneCleanup
 
 # Programmatic (in Python):
-from midas_tomo_python import reconstruct
-reconstruct(dark_frame, white_frames, projections, angles, output_dir)
+from midas_tomo_python import run_tomo, run_tomo_cleanup_sweep
+tune = run_tomo_cleanup_sweep(data, dark, whites, '/tmp/work', thetas, shift=0.0)
+cfg = tune['best_config']
+recon = run_tomo(data, dark, whites, '/tmp/work', thetas, shifts=[-2, 2, 0.1],
+                 doStripeRemoval=1, stripeSnr=cfg['snr'],
+                 stripeLaSize=cfg['la'], stripeSmSize=cfg['sm'])
 ```
 
 ---

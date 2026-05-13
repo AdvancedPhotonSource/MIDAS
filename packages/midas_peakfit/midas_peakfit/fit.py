@@ -18,6 +18,7 @@ from midas_peakfit.lm import LMConfig, lm_solve
 from midas_peakfit.model import integrated_intensity, residuals
 from midas_peakfit.postfit import N_PEAK_COLS, build_peak_rows
 from midas_peakfit.seeds import SeededRegion
+from midas_peakfit.uncertainty import compute_moment_sigma
 
 
 # Pixel-count buckets. Powers of two are convenient and limit the number
@@ -34,6 +35,15 @@ def _pixel_bucket(n: int) -> int:
 
 N_UNC_COLS = 9  # BG_sigma + 8 per-peak sigmas (Imax, R, Eta, Mu, sgR, slR, sgE, slE)
 
+# Moment-sidecar layout per peak (Modregger 2025; see uncertainty.compute_moment_sigma):
+#   col 0: M_0                     — background-subtracted integrated counts
+#   col 1: quality_flag (0/1/2)    — Modregger photon-count regime (cast to double)
+#   col 2: u_M1_R   [pixel]        — shot-noise σ on radial centroid
+#   col 3: u_M1_Eta [degree]       — shot-noise σ on azimuthal centroid
+#   col 4: u_M2_R   [pixel²]       — shot-noise σ on radial M_2
+#   col 5: u_M2_Eta [degree²]      — shot-noise σ on azimuthal M_2
+N_MOMENT_COLS = 6
+
 
 @dataclass
 class FitOutput:
@@ -44,6 +54,12 @@ class FitOutput:
     (duplicated across the region's peaks for downstream parsing convenience);
     columns 1..8 are σ for (Imax, R, Eta, Mu, σGR, σLR, σGEta, σLEta) — same
     parameter order as in the LM ``x`` vector.
+
+    ``rows_moment`` (optional, set only when ``compute_moments`` is on) holds
+    a ``(n_peaks, 6)`` per-peak moment-sensitivity table per the layout
+    documented at ``N_MOMENT_COLS`` above. Model-free, derived from the
+    seed-stage Voronoi-partitioned moments; complementary to the
+    Hessian-based ``rows_unc``.
     """
 
     region_id: int
@@ -51,6 +67,7 @@ class FitOutput:
     pixel_y: np.ndarray  # int16 (n_pixels_this_region,)  Y row
     pixel_z: np.ndarray  # int16 (n_pixels_this_region,)  Z col
     rows_unc: np.ndarray | None = None  # (n_peaks, 9) float64 or None
+    rows_moment: np.ndarray | None = None  # (n_peaks, 6) float64 or None
 
 
 def _build_unc_rows(sigma_x_b: np.ndarray, n_peaks: int) -> np.ndarray:
@@ -64,6 +81,33 @@ def _build_unc_rows(sigma_x_b: np.ndarray, n_peaks: int) -> np.ndarray:
     out[:, 0] = float(sigma_x_b[0])  # BG_sigma replicated
     per_peak = sigma_x_b[1:].reshape(n_peaks, 8)
     out[:, 1:9] = per_peak
+    return out
+
+
+def _build_moment_rows(sr: SeededRegion) -> np.ndarray | None:
+    """Build the per-peak moment-sensitivity table for one seeded region.
+
+    Returns ``None`` if higher-moment data was not collected (i.e. the seed
+    pass ran with ``compute_moments=False``).
+    """
+    if sr.peak_M2_R is None:
+        return None
+    n = sr.n_peaks
+    out = np.zeros((n, N_MOMENT_COLS), dtype=np.float64)
+    out[:, 0] = sr.peak_M0
+    out[:, 1] = sr.peak_quality.astype(np.float64)
+    # dx = 1.0: R is in pixel units, η is in degree units; both already
+    # parameterise the per-pixel coordinate at sampling spacing 1.
+    u_M0_R, u_M1_R, u_M2_R = compute_moment_sigma(
+        sr.peak_M0, sr.peak_M2_R, sr.peak_M4_R, dx=1.0
+    )
+    u_M0_E, u_M1_E, u_M2_E = compute_moment_sigma(
+        sr.peak_M0, sr.peak_M2_Eta, sr.peak_M4_Eta, dx=1.0
+    )
+    out[:, 2] = u_M1_R
+    out[:, 3] = u_M1_E
+    out[:, 4] = u_M2_R
+    out[:, 5] = u_M2_E
     return out
 
 
@@ -108,6 +152,7 @@ def fit_regions(
                     rows=rows,
                     pixel_y=sr.pixels_y.astype(np.int16),
                     pixel_z=sr.pixels_z.astype(np.int16),
+                    rows_moment=_build_moment_rows(sr),
                 )
             )
             spot_id_start += sr.n_peaks
@@ -264,6 +309,7 @@ def fit_regions(
                 pixel_y=sr.pixels_y.astype(np.int16),
                 pixel_z=sr.pixels_z.astype(np.int16),
                 rows_unc=rows_unc,
+                rows_moment=_build_moment_rows(sr),
             )
         )
         spot_id_start += sr.n_peaks
@@ -313,4 +359,4 @@ def _emit_seed_only_rows(
     )
 
 
-__all__ = ["FitOutput", "fit_regions"]
+__all__ = ["FitOutput", "fit_regions", "N_UNC_COLS", "N_MOMENT_COLS"]

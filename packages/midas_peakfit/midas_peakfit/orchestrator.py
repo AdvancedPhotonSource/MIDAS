@@ -63,6 +63,7 @@ def run(
     producer: str = "process",  # "process" | "thread"
     interleave_blocks: bool = False,
     compute_uncertainty: bool = False,
+    compute_moments: bool = False,
 ) -> dict:
     """Run the full pipeline for ``[block_nr, n_blocks)`` slice of ``data_file``.
 
@@ -204,6 +205,7 @@ def run(
                 Ycen=p.Ycen, Zcen=p.Zcen,
                 int_sat=p.IntSat, max_n_peaks=p.maxNPeaks,
                 panels=panels,
+                compute_moments=compute_moments,
             )
             if sr is not None:
                 seeded_list.append(sr)
@@ -278,7 +280,7 @@ def run(
             initializer=init_worker,
             initargs=(
                 str(data_file), params_pickle, dark, flood, mask,
-                good_coords, panels_pickle,
+                good_coords, panels_pickle, compute_moments,
             ),
         ) as ex:
             for result in ex.map(

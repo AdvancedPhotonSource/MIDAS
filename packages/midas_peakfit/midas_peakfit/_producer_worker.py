@@ -40,6 +40,7 @@ def init_worker(
     mask: np.ndarray,
     good_coords: np.ndarray,
     panels_pickle: bytes,
+    compute_moments: bool = False,
 ) -> None:
     """ProcessPoolExecutor initializer. Runs once per worker process.
 
@@ -71,6 +72,7 @@ def init_worker(
         panels=panels,
         store=store,
         data=data,
+        compute_moments=compute_moments,
     )
 
 
@@ -89,6 +91,7 @@ def process_frame_in_worker(local_idx: int) -> Tuple[int, float, int, List[Seede
     good_coords = _state["good_coords"]
     panels = _state["panels"]
     data = _state["data"]
+    compute_moments = _state.get("compute_moments", False)
 
     try:
         raw = np.asarray(data[local_idx], dtype=np.float64)
@@ -117,6 +120,7 @@ def process_frame_in_worker(local_idx: int) -> Tuple[int, float, int, List[Seede
             Ycen=p.Ycen, Zcen=p.Zcen,
             int_sat=p.IntSat, max_n_peaks=p.maxNPeaks,
             panels=panels,
+            compute_moments=compute_moments,
         )
         if sr is not None:
             seeded_list.append(sr)

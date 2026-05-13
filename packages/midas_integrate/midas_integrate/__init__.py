@@ -5,7 +5,7 @@ Public API surface (re-exports from submodules so users can do
 """
 from __future__ import annotations
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"
 
 from midas_integrate.bin_io import (
     PXLIST_DTYPE,
@@ -26,6 +26,7 @@ from midas_integrate.geometry import (
     REta_to_YZ,
     build_bin_edges,
     build_q_bin_edges_in_R,
+    build_tth_bin_edges_in_R,
     polygon_area,
     circle_seg_intersect,
     ray_seg_intersect,
@@ -65,6 +66,10 @@ from midas_integrate.peakfit import (
 from midas_integrate.fused_csr import build_fused_geometry
 from midas_integrate.postprocess import gauss_smooth_eta, median_filter_eta
 from midas_integrate.exporters import export as zarr_to_csv
+from midas_integrate.compat.from_v2 import (
+    params_from_v2_unpacked,
+    params_from_calibration_spec,
+)
 
 __all__ = [
     "__version__",
@@ -88,6 +93,7 @@ __all__ = [
     "REta_to_YZ",
     "build_bin_edges",
     "build_q_bin_edges_in_R",
+    "build_tth_bin_edges_in_R",
     "polygon_area",
     "circle_seg_intersect",
     "ray_seg_intersect",
@@ -128,4 +134,7 @@ __all__ = [
     "median_filter_eta",
     # exporters
     "zarr_to_csv",
+    # calibrate-v2 compat
+    "params_from_v2_unpacked",
+    "params_from_calibration_spec",
 ]

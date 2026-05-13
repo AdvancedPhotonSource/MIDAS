@@ -77,6 +77,50 @@ def test_param_hash_deterministic():
     assert h1 != h3
 
 
+def test_param_hash_includes_all_15_distortion_coefficients():
+    """After the v2 calibration refactor every one of p0..p14 must invalidate
+    the hash.  v1's MapHeader.h only hashed p0,p1,p2,p3,p4,p6 — silently
+    producing stale Map.bin when any other coefficient changed."""
+    common = dict(
+        Lsd=580550.5, Ycen=700.0, Zcen=865.0, pxY=172.0, pxZ=172.0,
+        tx=0.0, ty=0.18, tz=0.53,
+        RhoD=224100.4,
+        RBinSize=1.0, EtaBinSize=5.0,
+        RMin=10, RMax=1000, EtaMin=-180, EtaMax=180,
+        NrPixelsY=1475, NrPixelsZ=1679,
+        TransOpt=(2,),
+    )
+    h0 = compute_param_hash(**common)
+    for k in range(15):
+        h_perturbed = compute_param_hash(**{**common, f"p{k}": 1.234e-3})
+        assert h0 != h_perturbed, (
+            f"p{k} did not change the hash — stale-Map.bin bug "
+            f"reintroduced (v1 bug fingerprint)"
+        )
+
+
+def test_param_hash_includes_parallax_and_wavelength_unconditionally():
+    """v1 only hashed Wavelength when qMode=1.  After v2 the Parallax and
+    Wavelength can be refined for any analysis mode; both must invalidate
+    the hash."""
+    common = dict(
+        Lsd=580550.5, Ycen=700.0, Zcen=865.0, pxY=172.0, pxZ=172.0,
+        tx=0.0, ty=0.18, tz=0.53,
+        RhoD=224100.4,
+        RBinSize=1.0, EtaBinSize=5.0,
+        RMin=10, RMax=1000, EtaMin=-180, EtaMax=180,
+        NrPixelsY=1475, NrPixelsZ=1679,
+        TransOpt=(2,),
+        qMode=0,                            # IMPORTANT: not in q-mode
+    )
+    h0 = compute_param_hash(**common)
+    h_par = compute_param_hash(**{**common, "Parallax": 1.0})
+    assert h0 != h_par, "Parallax changes did not invalidate the hash"
+    h_lam = compute_param_hash(**{**common, "Wavelength": 0.5})
+    assert h0 != h_lam, ("Wavelength changes did not invalidate the hash "
+                          "outside qMode (v2 refines wavelength under priors)")
+
+
 def test_synthetic_helper_round_trip(tmp_path):
     recs = [
         (1.0, 2.0, 0.5, 0.0, 0.5),

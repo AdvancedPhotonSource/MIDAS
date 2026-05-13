@@ -138,7 +138,48 @@ recon = run_tomo(
 > [!NOTE]
 > Both `run_tomo()` and `run_tomo_from_sinos()` automatically handle **odd slice counts** by internally duplicating the last slice to satisfy the MIDAS_TOMO even-slice requirement. The returned array is truncated back to the original slice count.
 
-### 3.4. From Pre-Computed Sinograms (Python API)
+### 3.4. Cleanup Parameter Tuning (recommended for new datasets)
+
+For new datasets where you do not yet know good Vo stripe-removal parameters, run a tuning sweep first. There are three layers, in increasing manual effort:
+
+**Easiest — CLI flag on `process_hdf.py`:**
+```bash
+python ~/opt/MIDAS/TOMO/process_hdf.py -dataFN data.h5 -nCPUs 20 --tuneCleanup
+```
+This runs a Vo-parameter sweep on a 4-slice slab at the HDF5 shift, auto-picks the best config by ring-strength metric, then proceeds with the full reconstruction using that config. Outputs land in `<data.h5>_cleanup_tuning/`:
+- `cleanup_tuning_montage.png` — visual comparison of all configs
+- `cleanup_tuning_scores.txt` — per-config ring metric
+- `cleanup_tuning_recommended.txt` — `snr la sm` (one line) — the auto-pick
+
+Additional CLI flags:
+- `--tuneCleanup my_grid.txt` — use a custom grid file (one `snr la sm` per line)
+- `--cleanup SNR LA SM` — skip tuning, force a single config
+- `--noCleanup` — explicitly disable stripe removal
+- `--shifts START END STEP` — override the HDF5 single shift with a sweep
+- `--tuningSlices N` — number of mid-stack slices used during tuning (default 4)
+
+**Programmatic — Python API:**
+```python
+from midas_tomo_python import run_tomo_cleanup_sweep, run_tomo
+
+tune = run_tomo_cleanup_sweep(
+    data, dark, whites, '/tmp/work', thetas,
+    shift=14.0,            # pick a near-optimal shift; cleanup is insensitive
+    cleanup_configs=None,  # None → built-in detector-aware grid
+)
+cfg = tune['best_config']  # {'snr': 3.0, 'la': 31, 'sm': 11}
+recon = run_tomo(
+    data, dark, whites, '/tmp/work', thetas, shifts=[-25, 25.1, 0.1],
+    doStripeRemoval=1, stripeSnr=cfg['snr'],
+    stripeLaSize=cfg['la'], stripeSmSize=cfg['sm'],
+)
+```
+
+`run_tomo_cleanup_sweep()` writes its outputs into the supplied `workingdir` (montage, scores, recommended config) and returns a dict with `configs`, `recons`, `ring_metric`, `best_idx`, and `best_config`.
+
+**Manual — C engine parameter file:** see §4.3 (`stripeConfigFile` keyword).
+
+### 3.5. From Pre-Computed Sinograms (Python API)
 
 When you already have sinogram data (e.g., from PF-HEDM `findSingleSolutionPFRefactored` output), use `run_tomo_from_sinos()` which uses the `areSinos=1` mode — no dark/white normalization is needed:
 
@@ -196,6 +237,7 @@ The `MIDAS_TOMO` binary reads a plain-text parameter file. Each line contains a 
 | `stripeSnr` | float | SNR threshold for stripe detection (higher = fewer stripes detected) | 3.0 |
 | `stripeLaSize` | int (odd) | Median filter window for large stripe correction | 61 |
 | `stripeSmSize` | int (odd) | Median filter window for small/medium stripe correction | 21 |
+| `stripeConfigFile` | string | Path to a sweep grid file (one `snr la sm` per line) for the cleanup parameter sweep. Requires `doStripeRemoval 1`. See §4.3. | — |
 
 ### 4.1. Reconstruction Filters
 
@@ -250,6 +292,55 @@ stripeSmSize 21
 
 > [!NOTE]
 > Stripe removal is applied to each normalized sinogram before the gridrec reconstruction step. It has no effect when `doStripeRemoval` is set to 0 (default). This feature is independent of the older `ringRemovalCoefficient` parameter and can be used alongside it, though using both simultaneously is generally unnecessary.
+
+### 4.3. Cleanup Parameter Sweep
+
+When you do not yet know good Vo stripe-removal parameters for a new dataset, MIDAS_TOMO can sweep over a user-supplied grid of `(snr, la_size, sm_size)` triples and produce one reconstruction per config. You then pick the best by visual inspection and/or by the ring-strength metric printed in the companion summary file.
+
+**Activation:** set both keywords in the parameter file:
+```text
+doStripeRemoval 1
+stripeConfigFile cleanup_grid.txt
+```
+
+**Grid file format** — one `snr la_size sm_size` per line; `#` starts a comment. A row of `0 0 0` is treated as the no-cleanup baseline (handy for an apples-to-apples comparison):
+
+```text
+# snr  la  sm
+0      0   0       # baseline (no cleanup)
+3.0    31  11
+3.0    41  15
+1.5    31  11
+```
+
+**Requirement:** `n_shifts >= 2`. The sweep reuses the multi-shift inner loop, which pairs shifts in the dual-slice gridrec call. If you only want one effective shift, pass `shiftValues X X+0.1 0.1` and ignore the second slice in the output cube.
+
+**Output cube layout** when `stripeConfigFile` is set:
+
+- Filename gains a `NrCleanup_NNN_` prefix:
+  ```
+  {reconFileName}_NrCleanup_NNN_NrShifts_NNN_NrSlices_NNNNN_XDim_NNNNNN_YDim_NNNNNN_float32.bin
+  ```
+- Float32 cube of shape `(nCleanup, nShifts, nSlices, X, Y)`.
+- Companion text file `{reconFileName}_cleanup_configs.txt` lists each `(idx, snr, la, sm)` in cube order.
+
+**Reading the cube in Python:**
+
+```python
+import numpy as np
+recon = np.fromfile('recon_NrCleanup_004_NrShifts_002_NrSlices_00004_'
+                    'XDim_000128_YDim_000128_float32.bin', dtype=np.float32)
+recon = recon.reshape((4, 2, 4, 128, 128))
+# recon[ci, si, sliceIdx] is the slice at cleanup ci, shift si
+```
+
+**Output cube (single-cleanup) is unchanged** — the filename stays `_NrShifts_NNN_...` when `stripeConfigFile` is absent or `n_cleanup_configs == 1`. The sweep feature is fully opt-in.
+
+> [!TIP]
+> **Where to start.** For a 128-px detector the built-in Python grid (see §6) is `(0,0,0)`, `(3.0,33,11)`, `(3.0,43,15)`, `(1.5,33,11)`. For a 2048-px detector it scales to `(0,0,0)`, `(3.0,511,171)`, `(3.0,681,227)`, `(1.5,511,171)`. Lower SNR detects fainter stripes; larger windows correct broader stripes.
+
+> [!NOTE]
+> The C engine sweeps cleanup configs *inside* one MIDAS_TOMO invocation — sinograms are read and normalized once, then a clean master copy is restored before each cleanup pass. So sweeping 4 cleanup configs is roughly 4× the stripe-removal cost (typically a fraction of total runtime) plus 1× the reconstruction cost per config.
 
 ## 5. Input Data Format
 

@@ -30,7 +30,7 @@ from typing import List
 
 import numpy as np
 
-from midas_peakfit.fit import FitOutput, N_UNC_COLS
+from midas_peakfit.fit import FitOutput, N_UNC_COLS, N_MOMENT_COLS
 from midas_peakfit.postfit import N_PEAK_COLS
 
 
@@ -43,6 +43,7 @@ class FrameAccumulator:
 
     rows: List[np.ndarray] = field(default_factory=list)  # each (nPk, 29)
     rows_unc: List[np.ndarray] = field(default_factory=list)  # each (nPk, 9) or None
+    rows_moment: List[np.ndarray] = field(default_factory=list)  # each (nPk, 6) or None
     pixel_y: List[np.ndarray] = field(default_factory=list)  # each (nPx,)
     pixel_z: List[np.ndarray] = field(default_factory=list)  # each (nPx,)
     n_px_per_peak: List[int] = field(default_factory=list)
@@ -55,11 +56,16 @@ class FrameAccumulator:
     def has_unc(self) -> bool:
         return any(u is not None for u in self.rows_unc)
 
+    @property
+    def has_moment(self) -> bool:
+        return any(m is not None for m in self.rows_moment)
+
     def add(self, fo: FitOutput) -> None:
         if fo.rows.shape[0] == 0:
             return
         self.rows.append(fo.rows)
         self.rows_unc.append(fo.rows_unc)
+        self.rows_moment.append(fo.rows_moment)
         # Each peak in this region shares the same pixel set
         for _ in range(fo.rows.shape[0]):
             self.pixel_y.append(fo.pixel_y)
@@ -81,6 +87,18 @@ class FrameAccumulator:
                 chunks.append(np.full((r.shape[0], N_UNC_COLS), np.nan, dtype=np.float64))
             else:
                 chunks.append(u)
+        return np.concatenate(chunks, axis=0)
+
+    def stacked_moment(self) -> np.ndarray:
+        """Stack ``rows_moment`` for all regions; missing rows become NaN."""
+        if not self.rows:
+            return np.zeros((0, N_MOMENT_COLS), dtype=np.float64)
+        chunks = []
+        for r, m in zip(self.rows, self.rows_moment):
+            if m is None:
+                chunks.append(np.full((r.shape[0], N_MOMENT_COLS), np.nan, dtype=np.float64))
+            else:
+                chunks.append(m)
         return np.concatenate(chunks, axis=0)
 
 
@@ -196,6 +214,31 @@ def write_consolidated_peak_files(
                         unc = acc.stacked_unc()
                         f.write(np.ascontiguousarray(unc, dtype=np.float64).tobytes())
         print(f"Wrote {unc_path} ({n_total_frames} frames, {N_UNC_COLS} σ-cols/peak)")
+
+    # ── AllPeaks_PS_moment.bin (model-free moment σ + quality flag) ─
+    # Same header layout as AllPeaks_PS.bin but ``N_MOMENT_COLS`` doubles per
+    # peak. Per Modregger et al., J. Appl. Cryst. 58, 1653 (2025). Skipped
+    # if no accumulator carries moment data (i.e. --moment-uncertainty off).
+    if any(acc.has_moment for acc in accumulators):
+        moment_path = out_folder / "AllPeaks_PS_moment.bin"
+        moment_header_size = 4 + n_total_frames * 4 + n_total_frames * 8
+        moment_offsets = np.zeros(n_total_frames, dtype=np.int64)
+        data_off = moment_header_size
+        for f in range(n_total_frames):
+            moment_offsets[f] = data_off
+            data_off += int(n_peaks_arr[f]) * N_MOMENT_COLS * 8
+        with open(moment_path, "wb") as f:
+            f.write(np.int32(n_total_frames).tobytes())
+            f.write(n_peaks_arr.tobytes())
+            f.write(moment_offsets.tobytes())
+            for v in range(n_total_frames):
+                i = abs_to_loc.get(v, -1)
+                if i >= 0:
+                    acc = accumulators[i]
+                    if acc.n_peaks > 0:
+                        mom = acc.stacked_moment()
+                        f.write(np.ascontiguousarray(mom, dtype=np.float64).tobytes())
+        print(f"Wrote {moment_path} ({n_total_frames} frames, {N_MOMENT_COLS} moment-cols/peak)")
     return ps_path, px_path
 
 

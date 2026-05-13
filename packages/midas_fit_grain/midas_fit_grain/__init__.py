@@ -28,9 +28,12 @@ from .observations import ObservedSpots
 from .refine import GrainFitResult, refine_grain
 from .refine_block import BlockFitResult, refine_block
 from .residuals import grain_residuals
+from .spec_residual import HEDMResidualBundle, hedm_spot_residual
 
 __all__ = [
     "FitConfig",
+    "HEDMResidualBundle",
+    "hedm_spot_residual",
     "ExtraInfoSpot",
     "GrainResult",
     "PerSpotFit",

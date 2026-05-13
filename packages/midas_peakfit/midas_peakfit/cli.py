@@ -83,6 +83,16 @@ def _build_parser() -> argparse.ArgumentParser:
             "9 σ columns per peak (BG, Imax, R, Eta, Mu, σGR, σLR, σGEta, σLEta)."
         ),
     )
+    p.add_argument(
+        "--moment-uncertainty", action="store_true",
+        help=(
+            "Emit per-peak model-free moment-based σ alongside fitted "
+            "parameters (Modregger et al., J. Appl. Cryst. 58, 1653, 2025). "
+            "Adds a sibling AllPeaks_PS_moment.bin file with 6 columns per "
+            "peak: M_0, quality_flag (0/1/2 = OK/marginal/deep-Poisson), "
+            "u_M1_R [px], u_M1_Eta [deg], u_M2_R [px²], u_M2_Eta [deg²]."
+        ),
+    )
     p.add_argument("--version", action="version", version=f"peakfit_torch {__version__}")
     return p
 
@@ -115,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         producer=args.producer,
         interleave_blocks=args.interleave_blocks,
         compute_uncertainty=args.compute_uncertainty,
+        compute_moments=args.moment_uncertainty,
     )
 
     if args.validate_against is not None:

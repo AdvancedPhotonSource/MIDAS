@@ -271,7 +271,19 @@ int main(int argc, char *argv[]) {
   if (recon_info_record.n_shifts > 1 && recon_info_record.n_shifts % 2 != 0) {
     printf("Number of shifts must be even. Exiting\n");
     return 1;
-  } else {
+  }
+  /* Cleanup sweep requires the multi-shift inner loop (it pairs shifts in
+   * the dual-slice gridrec call). Pass at least 2 shifts so it can pair. */
+  if (recon_info_record.n_cleanup_configs > 1 &&
+      recon_info_record.n_shifts < 2) {
+    fprintf(stderr,
+            "Error: stripeConfigFile sweep requires n_shifts >= 2.\n"
+            "Use shiftValues like 'X X+0.1 0.1' to produce 2 shifts and\n"
+            "ignore the second result, or call run_tomo_cleanup_sweep() in\n"
+            "Python which handles this automatically.\n");
+    return 1;
+  }
+  {
     printf("Total number of shifts: %d, total number of  slices: %d.\n",
            recon_info_record.n_shifts, recon_info_record.n_slices);
   }
@@ -326,7 +338,11 @@ int main(int argc, char *argv[]) {
 #endif
 
   double start_time = omp_get_wtime();
-  if (recon_info_record.n_shifts == 1) {
+  /* If a cleanup-parameter sweep is active (n_cleanup_configs > 1) we always
+   * route through the parallel pre-read multi-shift path below, even if there
+   * is only one shift — that path is where the outer cleanup loop lives. */
+  if (recon_info_record.n_shifts == 1 &&
+      recon_info_record.n_cleanup_configs == 1) {
     printf("Starting processing of all slices with %d threads.\n", numProcs);
     // mmap sinogram input for CPU path (same optimization as GPU)
     float *cpu_sino_mmap = NULL;
@@ -741,13 +757,13 @@ int main(int argc, char *argv[]) {
         }
 
         getRecons(&information, &recon_info_record, &param, 0);
-        int rw = writeRecon(oldSliceNr, &information, &recon_info_record, 0,
-                            output_fd);
+        int rw = writeRecon(oldSliceNr, sliceRowNr - 1, &information,
+                            &recon_info_record, 0, 0, output_fd);
         if (rw == 1)
           continue;
         getRecons(&information, &recon_info_record, &param, offsetRecons);
-        rw =
-            writeRecon(sliceNr, &information, &recon_info_record, 0, output_fd);
+        rw = writeRecon(sliceNr, sliceRowNr, &information, &recon_info_record,
+                        0, 0, output_fd);
 
         if (rw == 1)
           continue;
@@ -787,11 +803,38 @@ int main(int argc, char *argv[]) {
     int output_fd = -1;
     if (recon_info_record.saveReconSeparate == 0) {
       char outFileName[4096];
-      sprintf(outFileName,
-              "%s_NrShifts_%03d_NrSlices_%05d_XDim_%06d_YDim_%06d_float32.bin",
-              recon_info_record.ReconFileName, recon_info_record.n_shifts,
-              recon_info_record.n_slices, recon_info_record.reconstruction_xdim,
-              recon_info_record.reconstruction_xdim);
+      if (recon_info_record.n_cleanup_configs > 1) {
+        sprintf(outFileName,
+                "%s_NrCleanup_%03d_NrShifts_%03d_NrSlices_%05d_XDim_%06d_YDim_%06d_float32.bin",
+                recon_info_record.ReconFileName,
+                recon_info_record.n_cleanup_configs,
+                recon_info_record.n_shifts, recon_info_record.n_slices,
+                recon_info_record.reconstruction_xdim,
+                recon_info_record.reconstruction_xdim);
+        /* Companion metadata: list configs in cube order. */
+        char cfgFileName[4096];
+        sprintf(cfgFileName, "%s_cleanup_configs.txt",
+                recon_info_record.ReconFileName);
+        FILE *cfgf = fopen(cfgFileName, "w");
+        if (cfgf != NULL) {
+          fprintf(cfgf, "# cleanup_idx\tsnr\tla_size\tsm_size\n");
+          int ci;
+          for (ci = 0; ci < recon_info_record.n_cleanup_configs; ci++) {
+            fprintf(cfgf, "%d\t%.4f\t%d\t%d\n", ci,
+                    recon_info_record.cleanup_snr_values[ci],
+                    recon_info_record.cleanup_la_values[ci],
+                    recon_info_record.cleanup_sm_values[ci]);
+          }
+          fclose(cfgf);
+        }
+      } else {
+        sprintf(outFileName,
+                "%s_NrShifts_%03d_NrSlices_%05d_XDim_%06d_YDim_%06d_float32.bin",
+                recon_info_record.ReconFileName, recon_info_record.n_shifts,
+                recon_info_record.n_slices,
+                recon_info_record.reconstruction_xdim,
+                recon_info_record.reconstruction_xdim);
+      }
       output_fd = open(outFileName, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
     }
 #pragma omp parallel num_threads(nJobs)
@@ -817,102 +860,185 @@ int main(int argc, char *argv[]) {
     }
     if (badRead == 1)
       return 0;
-    // Apply stripe removal to all pre-read sinograms (parallel — each is
-    // independent)
-    if (recon_info_record.doStripeRemoval) {
-#pragma omp parallel for schedule(dynamic)
+
+    /* Master clean copies of each sinogram. Allocated only when sweeping
+     * cleanup configs — for the legacy single-config path, sinograms are
+     * mutated in-place exactly as before (no extra memory). */
+    float **master_sinos = NULL;
+    size_t sino_floats = (size_t)recon_info_record.sinogram_adjusted_xdim *
+                         (size_t)recon_info_record.theta_list_size;
+    if (recon_info_record.n_cleanup_configs > 1) {
+      master_sinos = (float **)malloc(
+          sizeof(float *) * recon_info_record.n_slices);
+      if (master_sinos == NULL) {
+        fprintf(stderr, "Out of memory allocating master sino pointer array\n");
+        return 1;
+      }
       for (i = 0; i < recon_info_record.n_slices; i++) {
-        cleanup_sinogram_stripes(
-            readStruct[i].norm_sino, recon_info_record.theta_list_size,
-            recon_info_record.sinogram_adjusted_xdim,
-            recon_info_record.stripeSnr, recon_info_record.stripeLaSize,
-            recon_info_record.stripeSmSize, 1);
+        master_sinos[i] = (float *)malloc(sizeof(float) * sino_floats);
+        if (master_sinos[i] == NULL) {
+          fprintf(stderr, "Out of memory allocating master sino %d\n", i);
+          return 1;
+        }
+        memcpy(master_sinos[i], readStruct[i].norm_sino,
+               sizeof(float) * sino_floats);
       }
     }
-    nJobs = recon_info_record.n_slices * recon_info_record.n_shifts;
-    numProcs = (nJobs / 2 < numProcs) ? nJobs / 2 : numProcs;
-    int nrSlicesThread = (int)ceil((double)nJobs / (2.0 * (double)numProcs));
-    printf("Number of FFT jobs per thread %d, Number of threads: %d.\nStarting "
-           "processing.\n",
-           nrSlicesThread, numProcs);
-#pragma omp parallel num_threads(numProcs)
-    {
-      int procNr = omp_get_thread_num();
-      int startJobNr, endJobNr;
-      startJobNr = procNr * nrSlicesThread * 2;
-      endJobNr = (startJobNr + nrSlicesThread * 2 < nJobs)
-                     ? startJobNr + nrSlicesThread * 2
-                     : nJobs;
-      LOCAL_CONFIG_OPTS information;
-      information.shift = recon_info_record.shift_values[0];
-      setSinoSize(&information, &recon_info_record);
-      gridrecParams param;
-      param.sinogram_x_dim = information.sinogram_adjusted_xdim * 2;
-      param.theta_list = recon_info_record.theta_list;
-      param.filter_type = recon_info_record.filter;
-      param.theta_list_size = recon_info_record.theta_list_size;
-      param.wisdom_string = (char *)malloc(
-          sizeof(char) * (strlen(recon_info_record.wisdom_string) + 1));
-      param.setPlan = 0;
-      strcpy(param.wisdom_string, recon_info_record.wisdom_string);
-      size_t offt, offsetRecons;
-      setGridRecPSWF(&param);
-      initFFTMemoryStructures(&param);
-      initGridRec(&param);
-      int jobNr, sliceNr, shiftNr, localSliceNr;
-      for (jobNr = 0; jobNr < (endJobNr - startJobNr) / 2; jobNr++) {
-        memsets(&information, &recon_info_record);
-        sliceNr = (startJobNr + jobNr * 2) / recon_info_record.n_shifts;
-        shiftNr = (startJobNr + jobNr * 2) % recon_info_record.n_shifts;
-        localSliceNr = recon_info_record.slices_to_process[sliceNr];
-        information.shift = recon_info_record.shift_values[shiftNr];
-        memcpy(information.sino_calc_buffer, readStruct[sliceNr].norm_sino,
-               sizeof(float) * information.sinogram_adjusted_xdim *
-                   recon_info_record.theta_list_size);
-        offt = 0;
-        offsetRecons = 0;
-        reconCentering(&information, &recon_info_record, offt,
-                       recon_info_record.doLogProj);
-        setSinoAndReconBuffers(
-            1, &information.sinograms_boundary_padding[offt],
-            &information.reconstructions_boundary_padding[offsetRecons],
-            &param);
-        information.shift = recon_info_record.shift_values[shiftNr + 1];
-        memcpy(information.sino_calc_buffer, readStruct[sliceNr].norm_sino,
-               sizeof(float) * information.sinogram_adjusted_xdim *
-                   recon_info_record.theta_list_size);
-        offt = information.sinogram_adjusted_size * 2;
-        offsetRecons = information.reconstruction_size * 4;
-        reconCentering(&information, &recon_info_record, offt,
-                       recon_info_record.doLogProj);
-        setSinoAndReconBuffers(
-            2, &information.sinograms_boundary_padding[offt],
-            &information.reconstructions_boundary_padding[offsetRecons],
-            &param);
-#ifdef ENABLE_CUDA
-        if (useGPU && gpu_ctx) {
-          tomo_gpu_reconstruct(gpu_ctx,
-              param.sinogram1, param.sinogram2,
-              param.reconstruction1, param.reconstruction2,
-              param.M, param.M0, param.M02, param.pdim);
-        } else
-#endif
-        {
-          reconstruct(&param);
+
+    /* OUTER LOOP — over cleanup configurations. For a single config this
+     * runs once and reproduces the original behavior. */
+    int cleanupNr;
+    for (cleanupNr = 0; cleanupNr < recon_info_record.n_cleanup_configs;
+         cleanupNr++) {
+      /* Restore clean sinograms before applying this config's cleanup. */
+      if (master_sinos != NULL) {
+#pragma omp parallel for schedule(dynamic)
+        for (i = 0; i < recon_info_record.n_slices; i++) {
+          memcpy(readStruct[i].norm_sino, master_sinos[i],
+                 sizeof(float) * sino_floats);
         }
-        information.shift = recon_info_record.shift_values[shiftNr];
-        getRecons(&information, &recon_info_record, &param, 0);
-        int rw = writeRecon(localSliceNr, &information, &recon_info_record,
-                            shiftNr, output_fd);
-        if (rw == 1)
-          continue;
-        information.shift = recon_info_record.shift_values[shiftNr + 1];
-        getRecons(&information, &recon_info_record, &param, offsetRecons);
-        rw = writeRecon(localSliceNr, &information, &recon_info_record,
-                        shiftNr + 1, output_fd);
-        if (rw == 1)
-          continue;
       }
+
+      /* Apply stripe removal — either the sweep's per-config params, or the
+       * legacy single-config params. snr <= 0 is the "no cleanup" baseline. */
+      int apply_cleanup;
+      float use_snr;
+      int use_la, use_sm;
+      if (recon_info_record.n_cleanup_configs > 1) {
+        use_snr = recon_info_record.cleanup_snr_values[cleanupNr];
+        use_la = recon_info_record.cleanup_la_values[cleanupNr];
+        use_sm = recon_info_record.cleanup_sm_values[cleanupNr];
+        apply_cleanup = (use_snr > 0.0f);
+      } else {
+        use_snr = recon_info_record.stripeSnr;
+        use_la = recon_info_record.stripeLaSize;
+        use_sm = recon_info_record.stripeSmSize;
+        apply_cleanup = recon_info_record.doStripeRemoval ? 1 : 0;
+      }
+      if (apply_cleanup) {
+        if (recon_info_record.n_cleanup_configs > 1) {
+          printf("Cleanup config %d/%d: snr=%.2f la=%d sm=%d\n",
+                 cleanupNr + 1, recon_info_record.n_cleanup_configs,
+                 use_snr, use_la, use_sm);
+        }
+#pragma omp parallel for schedule(dynamic)
+        for (i = 0; i < recon_info_record.n_slices; i++) {
+          cleanup_sinogram_stripes(
+              readStruct[i].norm_sino, recon_info_record.theta_list_size,
+              recon_info_record.sinogram_adjusted_xdim,
+              use_snr, use_la, use_sm, 1);
+        }
+      } else if (recon_info_record.n_cleanup_configs > 1) {
+        printf("Cleanup config %d/%d: baseline (no stripe removal)\n",
+               cleanupNr + 1, recon_info_record.n_cleanup_configs);
+      }
+
+      nJobs = recon_info_record.n_slices * recon_info_record.n_shifts;
+      int innerProcs = (nJobs / 2 < numProcs) ? nJobs / 2 : numProcs;
+      if (innerProcs < 1) innerProcs = 1;
+      int nrSlicesThread = (int)ceil((double)nJobs / (2.0 * (double)innerProcs));
+      if (cleanupNr == 0) {
+        printf("Number of FFT jobs per thread %d, Number of threads: %d.\n"
+               "Starting processing.\n",
+               nrSlicesThread, innerProcs);
+      }
+#pragma omp parallel num_threads(innerProcs)
+      {
+        int procNr = omp_get_thread_num();
+        int startJobNr, endJobNr;
+        startJobNr = procNr * nrSlicesThread * 2;
+        endJobNr = (startJobNr + nrSlicesThread * 2 < nJobs)
+                       ? startJobNr + nrSlicesThread * 2
+                       : nJobs;
+        LOCAL_CONFIG_OPTS information;
+        information.shift = recon_info_record.shift_values[0];
+        setSinoSize(&information, &recon_info_record);
+        gridrecParams param;
+        param.sinogram_x_dim = information.sinogram_adjusted_xdim * 2;
+        param.theta_list = recon_info_record.theta_list;
+        param.filter_type = recon_info_record.filter;
+        param.theta_list_size = recon_info_record.theta_list_size;
+        param.wisdom_string = (char *)malloc(
+            sizeof(char) * (strlen(recon_info_record.wisdom_string) + 1));
+        param.setPlan = 0;
+        strcpy(param.wisdom_string, recon_info_record.wisdom_string);
+        size_t offt, offsetRecons;
+        setGridRecPSWF(&param);
+        initFFTMemoryStructures(&param);
+        initGridRec(&param);
+        int jobNr, sliceNr, shiftNr, localSliceNr;
+        for (jobNr = 0; jobNr < (endJobNr - startJobNr) / 2; jobNr++) {
+          memsets(&information, &recon_info_record);
+          sliceNr = (startJobNr + jobNr * 2) / recon_info_record.n_shifts;
+          shiftNr = (startJobNr + jobNr * 2) % recon_info_record.n_shifts;
+          /* When n_shifts is odd (only legal at n_shifts==1 with sweep)
+           * the +1 below would walk off shift_values; guard. */
+          int shiftNr2 = (shiftNr + 1 < recon_info_record.n_shifts)
+                             ? shiftNr + 1
+                             : shiftNr;
+          localSliceNr = recon_info_record.slices_to_process[sliceNr];
+          information.shift = recon_info_record.shift_values[shiftNr];
+          memcpy(information.sino_calc_buffer, readStruct[sliceNr].norm_sino,
+                 sizeof(float) * information.sinogram_adjusted_xdim *
+                     recon_info_record.theta_list_size);
+          offt = 0;
+          offsetRecons = 0;
+          reconCentering(&information, &recon_info_record, offt,
+                         recon_info_record.doLogProj);
+          setSinoAndReconBuffers(
+              1, &information.sinograms_boundary_padding[offt],
+              &information.reconstructions_boundary_padding[offsetRecons],
+              &param);
+          information.shift = recon_info_record.shift_values[shiftNr2];
+          memcpy(information.sino_calc_buffer, readStruct[sliceNr].norm_sino,
+                 sizeof(float) * information.sinogram_adjusted_xdim *
+                     recon_info_record.theta_list_size);
+          offt = information.sinogram_adjusted_size * 2;
+          offsetRecons = information.reconstruction_size * 4;
+          reconCentering(&information, &recon_info_record, offt,
+                         recon_info_record.doLogProj);
+          setSinoAndReconBuffers(
+              2, &information.sinograms_boundary_padding[offt],
+              &information.reconstructions_boundary_padding[offsetRecons],
+              &param);
+#ifdef ENABLE_CUDA
+          if (useGPU && gpu_ctx) {
+            tomo_gpu_reconstruct(gpu_ctx,
+                param.sinogram1, param.sinogram2,
+                param.reconstruction1, param.reconstruction2,
+                param.M, param.M0, param.M02, param.pdim);
+          } else
+#endif
+          {
+            reconstruct(&param);
+          }
+          information.shift = recon_info_record.shift_values[shiftNr];
+          getRecons(&information, &recon_info_record, &param, 0);
+          int rw = writeRecon(localSliceNr, sliceNr, &information,
+                              &recon_info_record, shiftNr, cleanupNr,
+                              output_fd);
+          if (rw == 1)
+            continue;
+          if (shiftNr2 != shiftNr) {
+            information.shift = recon_info_record.shift_values[shiftNr2];
+            getRecons(&information, &recon_info_record, &param, offsetRecons);
+            rw = writeRecon(localSliceNr, sliceNr, &information,
+                            &recon_info_record, shiftNr2, cleanupNr,
+                            output_fd);
+            if (rw == 1)
+              continue;
+          }
+        }
+        destroyFFTMemoryStructures(&param);
+        free(param.wisdom_string);
+        freeSinoBuffers(&information);
+      }
+    } /* end outer cleanup loop */
+
+    if (master_sinos != NULL) {
+      for (i = 0; i < recon_info_record.n_slices; i++)
+        free(master_sinos[i]);
+      free(master_sinos);
     }
     if (output_fd != -1) {
       close(output_fd);
