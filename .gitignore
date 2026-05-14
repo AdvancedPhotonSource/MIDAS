@@ -69,3 +69,6 @@ fftwf_wisdom_*.txt
 
 # Local machine/session artifacts
 .loglogin
+
+# parsl run directories (created at runtime; not source)
+**/runinfo/

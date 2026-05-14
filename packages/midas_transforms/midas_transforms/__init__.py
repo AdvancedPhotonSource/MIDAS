@@ -33,7 +33,7 @@ __version__ = "0.2.0"
 from .merge import merge_overlapping_peaks
 from .radius import calc_radius
 from .fit_setup import fit_setup
-from .bin_data import bin_data
+from .bin_data import bin_data, bin_data_scanning, bin_data_unified
 from .pipeline import Pipeline
 
 __all__ = [
@@ -41,6 +41,8 @@ __all__ = [
     "calc_radius",
     "fit_setup",
     "bin_data",
+    "bin_data_scanning",
+    "bin_data_unified",
     "Pipeline",
     "__version__",
 ]
