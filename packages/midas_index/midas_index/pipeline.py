@@ -148,6 +148,33 @@ class IndexerContext:
             dtype=dtype,
         )
 
+        # --- Scan-aware (pf-HEDM) state — default-off, no FF impact ---
+        # Populated by ``Indexer.run_scanning()`` per voxel; FF runs leave
+        # these as None / 0 and compare_spots receives no extra kwargs.
+        self.scan_positions: torch.Tensor | None = None
+        self.current_voxel_xy: torch.Tensor | None = None
+        self.scan_pos_tol_um: float = float(params.scan_pos_tol_um)
+        self.friedel_symmetric_scan_filter: bool = bool(
+            params.friedel_symmetric_scan_filter
+        )
+
+    def scan_kwargs(self, n_tuples: int) -> dict:
+        """Return scan-aware kwargs for :func:`matching.compare_spots`.
+
+        Empty in FF mode (``scan_positions`` is None) → caller's existing
+        compare_spots call is byte-identical to today. In scan mode,
+        returns the per-tuple voxel_xy + scan_positions + tol + Friedel
+        flag.
+        """
+        if self.scan_positions is None or self.current_voxel_xy is None:
+            return {}
+        return {
+            "scan_positions": self.scan_positions,
+            "voxel_xy": self.current_voxel_xy.view(1, 2).expand(n_tuples, 2),
+            "scan_pos_tol_um": self.scan_pos_tol_um,
+            "friedel_symmetric_scan_filter": self.friedel_symmetric_scan_filter,
+        }
+
     def find_obs_row_by_id(self, spot_id: int) -> int:
         """Return the row index of the observed spot whose column 4 equals `spot_id`."""
         col = self.obs[:, 4]
@@ -349,6 +376,7 @@ def process_seed(
         rings_to_reject=ctx.rings_to_reject,
         distance=p.Distance, pos=pos_all,
         max_n_cap=ctx.bin_max_count,
+        **ctx.scan_kwargs(N),
     )
 
     # 4. Reduce: per-seed best tuple via packed-score argmax.
@@ -798,6 +826,7 @@ def _compute_group_gpu(
         rings_to_reject=ctx.rings_to_reject,
         distance=p.Distance, pos=pos_all,
         max_n_cap=ctx.bin_max_count,
+        **ctx.scan_kwargs(theor.shape[0]),
     )
 
     keys = reduce_.pack_score(result.frac_matches, result.avg_ia)
@@ -937,6 +966,7 @@ def _compute_group_gpu_launch(ctx: IndexerContext, setup: dict):
         rings_to_reject=ctx.rings_to_reject,
         distance=p.Distance, pos=pos_all,
         max_n_cap=ctx.bin_max_count,
+        **ctx.scan_kwargs(theor.shape[0]),
     )
     keys = reduce_.pack_score(result.frac_matches, result.avg_ia)
     seed_meta_valid = [m for m in seed_meta if m["valid"]]

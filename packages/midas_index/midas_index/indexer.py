@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 
 import numpy as np
 import torch
@@ -146,3 +146,166 @@ class Indexer:
             spot_ids = spot_ids[:n_spots_to_index]
         return run_block(ctx, spot_ids, block_nr=block_nr, n_blocks=n_blocks,
                          seed_group_size=seed_group_size)
+
+    # ------------------------------------------------------------------
+    # Scan-aware run (pf-HEDM)
+    # ------------------------------------------------------------------
+
+    def run_scanning(
+        self,
+        scan_positions: np.ndarray | torch.Tensor,
+        *,
+        out_path: str | Path,
+        n_spots_to_index: int | None = None,
+        num_procs: int = 1,
+        seed_group_size: int | None = None,
+        voxel_block_nr: int = 0,
+        voxel_n_blocks: int = 1,
+    ) -> int:
+        """Run the per-voxel scanning indexer (pf-HEDM mode).
+
+        Iterates over the (n_scans × n_scans) voxel grid built as the
+        Cartesian product of ``scan_positions`` (1-D Y values, µm). For
+        each voxel, sets the scan-aware kwargs on ``IndexerContext`` and
+        runs the full seed pipeline; collects each voxel's solutions
+        into a list. After the loop, writes the consolidated
+        ``IndexBest_all.bin`` per the C
+        ``IndexerScanningOMP``/``IndexerConsolidatedIO.h`` byte layout.
+
+        Notes
+        -----
+        - The voxel grid layout matches
+          ``IndexerScanningOMP.c:1667-1683``: ``grid[i*nScans + j] =
+          (scan_positions[j], scan_positions[i])`` — Cartesian product
+          of sorted 1-D Y positions (scan-axis is Y only per P0 audit).
+        - ``params.scan_pos_tol_um`` and
+          ``params.friedel_symmetric_scan_filter`` drive the per-voxel
+          filter inside ``compare_spots``. ``scan_pos_tol_um == 0`` ⇒
+          filter inactive (degenerates to FF behavior per voxel, useful
+          for sanity).
+        - For very large grids the per-voxel cost is significant — call
+          with ``voxel_block_nr/voxel_n_blocks > 1`` to shard.
+
+        Returns
+        -------
+        int
+            Number of voxels processed (== ``end - start`` over the
+            sharded range).
+        """
+        from .pipeline import IndexerContext, run_block
+        from .io.consolidated import write_index_best_all
+
+        # 1. Validate scan positions BEFORE touching the context — we'd
+        # rather fail with a clear ValueError than dive into the
+        # pipeline's IndexerContext constructor which may need
+        # configured params (EtaBinSize etc.).
+        scan_positions_t = torch.as_tensor(
+            np.asarray(scan_positions), dtype=self.dtype, device=self.device,
+        ).view(-1)
+        n_scans = int(scan_positions_t.numel())
+        if n_scans < 2:
+            raise ValueError(
+                f"run_scanning requires n_scans >= 2; got {n_scans}. "
+                "Use run() for the FF (single-scan) case."
+            )
+
+        if self._observations is None:
+            self.load_observations()
+        obs = self._observations
+        assert obs is not None
+        apply_cpu_threads(num_procs, self.device)
+
+        # 2. Build context.
+        ctx = IndexerContext(
+            params=self.params,
+            hkls_real=obs["hkls_real"],
+            hkls_int=obs["hkls_int"],
+            obs=obs["spots"],
+            bin_data=obs["bin_data"],
+            bin_ndata=obs["bin_ndata"],
+            device=self.device,
+            dtype=self.dtype,
+        )
+        ctx.scan_positions = scan_positions_t
+
+        # 3. Build voxel grid: nVox = nScans * nScans, voxel_xy[v] =
+        # (scan_positions[v % nScans], scan_positions[v // nScans]).
+        # Matches IndexerScanningOMP.c:1667-1683.
+        # i-axis = "row" (y); j-axis = "col" (x). v = i * nScans + j.
+        idx = torch.arange(n_scans * n_scans, device=self.device)
+        i_idx = idx // n_scans
+        j_idx = idx % n_scans
+        voxel_xy_table = torch.stack(
+            [scan_positions_t[j_idx], scan_positions_t[i_idx]], dim=-1,
+        )                                     # (nVox, 2)
+        n_vox = int(voxel_xy_table.shape[0])
+
+        # 4. Voxel sharding (used for cluster runs).
+        if voxel_n_blocks < 1 or voxel_block_nr < 0 or voxel_block_nr >= voxel_n_blocks:
+            raise ValueError(
+                f"invalid voxel sharding: block={voxel_block_nr}, n={voxel_n_blocks}"
+            )
+        block_size = (n_vox + voxel_n_blocks - 1) // voxel_n_blocks
+        v_start = voxel_block_nr * block_size
+        v_end = min(v_start + block_size, n_vox)
+
+        # 5. Initial spot-ids list (same for every voxel; the scan filter
+        # decides per-voxel which spots are admissible).
+        spot_ids = torch.as_tensor(obs["spot_ids"], dtype=torch.int64)
+        if n_spots_to_index is not None:
+            spot_ids = spot_ids[:n_spots_to_index]
+
+        # 6. Per-voxel loop. Collect each voxel's seed results into a
+        # (n_solutions, 16) float64 record block matching the C
+        # IndexerScanningOMP consolidated layout.
+        per_voxel_records: list[np.ndarray] = [
+            np.zeros((0, 16), dtype=np.float64) for _ in range(n_vox)
+        ]
+        for v in range(v_start, v_end):
+            ctx.current_voxel_xy = voxel_xy_table[v]
+            voxel_result = run_block(
+                ctx, spot_ids,
+                block_nr=0, n_blocks=1,
+                seed_group_size=seed_group_size,
+            )
+            per_voxel_records[v] = _seeds_to_record_block(voxel_result)
+
+        # 7. Write consolidated output.
+        write_index_best_all(out_path, per_voxel_records)
+        return v_end - v_start
+
+
+def _seeds_to_record_block(result) -> np.ndarray:
+    """Convert an IndexerResult into the (n_solutions, 16) record layout.
+
+    Column map (matches the IndexerScanningOMP.c writer / pf_MIDAS.py
+    parser semantics):
+
+        col 0  : seed spot id (mirrors the C convention)
+        col 1  : avg internal-angle score (radians)
+        col 2-10: 9-element orientation matrix (row-major 3×3)
+        col 11 : posX (sample-frame x, µm) — from best_pos[0]
+        col 12 : posY (sample-frame y, µm) — from best_pos[1]
+        col 13 : posZ (sample-frame z, µm) — from best_pos[2]
+        col 14 : nExpected (total predicted spots, denominator)
+        col 15 : nMatches (matched predicted spots, numerator)
+
+    Empty seeds (no matches) are dropped. One row per accepted seed.
+    """
+    rows: list[list[float]] = []
+    for s in result.seeds:
+        if s.n_matches <= 0:
+            continue
+        om = s.best_or_mat.detach().cpu().numpy().reshape(9)
+        pos = s.best_pos.detach().cpu().numpy().reshape(3)
+        rows.append([
+            float(s.spot_id),                          # 0
+            float(s.avg_ia),                           # 1
+            *[float(x) for x in om],                   # 2-10
+            float(pos[0]), float(pos[1]), float(pos[2]),  # 11-13
+            float(s.n_t_spots),                        # 14: nExpected
+            float(s.n_matches),                        # 15: nMatches
+        ])
+    if not rows:
+        return np.zeros((0, 16), dtype=np.float64)
+    return np.asarray(rows, dtype=np.float64)
