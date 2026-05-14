@@ -349,29 +349,64 @@ def quat_to_orient_mat(q) -> list:
     ]
 
 
-def fundamental_zone(quat, space_group: int) -> np.ndarray:
+def fundamental_zone(quat, space_group: int | None = None, *, sym=None) -> np.ndarray:
     """Reduce quaternion to fundamental region for a space group.
 
     Parameters
     ----------
     quat : array-like or torch.Tensor, shape (4,) or (..., 4)
-    space_group : int
+    space_group : int, optional
+        Required unless `sym` is provided.
+    sym : array-like or torch.Tensor, optional
+        Pre-computed symmetry table (n_sym, 4). When supplied, skips the
+        per-call `make_symmetries(space_group)` lookup; useful when many
+        quaternions are reduced under the same space group in a hot loop.
+        If both `space_group` and `sym` are passed, `sym` wins.
 
     Returns
     -------
     ndarray shape (4,) (NumPy backend) or torch.Tensor of the input's
     broadcast shape with trailing (4,) (torch backend).
     """
+    if sym is None and space_group is None:
+        raise ValueError("fundamental_zone requires `space_group` or `sym`")
     if _is_torch(quat):
-        return _fundamental_zone_torch(quat, space_group)
-    n_sym, sym = make_symmetries(space_group)
+        return _fundamental_zone_torch(quat, space_group, sym=sym)
+    if sym is None:
+        n_sym, sym_use = make_symmetries(space_group)
+    else:
+        sym_use = np.asarray(sym, dtype=np.float64)
+        if sym_use.ndim != 2 or sym_use.shape[1] != 4:
+            raise ValueError(f"sym must have shape (n_sym, 4); got {sym_use.shape}")
+        n_sym = sym_use.shape[0]
+        sym_use = [list(row) for row in sym_use]
     if _USE_C:
         qin = (ctypes.c_double * 4)(*quat)
         qout = (ctypes.c_double * 4)()
-        c_sym = _sym_to_c(n_sym, sym)
+        c_sym = _sym_to_c(n_sym, sym_use)
         _lib.BringDownToFundamentalRegionSym(qin, qout, n_sym, c_sym)
         return np.array([qout[0], qout[1], qout[2], qout[3]])
-    return _fundamental_zone_py(quat, n_sym, sym)
+    return _fundamental_zone_py(quat, n_sym, sym_use)
+
+
+def matrix_mult_f33(m, n):
+    """3×3 matrix multiplication. Numpy and torch transparent.
+
+    Parameters
+    ----------
+    m, n : array-like or torch.Tensor, shape (3, 3) — or batched (..., 3, 3) for torch.
+
+    Returns
+    -------
+    ndarray (3, 3) (NumPy backend) or torch.Tensor (..., 3, 3) (torch backend).
+    """
+    if _is_torch(m, n):
+        dtype, device = _torch_dtype_device(m, n)
+        return torch.matmul(
+            _to_torch(m, dtype=dtype, device=device),
+            _to_torch(n, dtype=dtype, device=device),
+        )
+    return np.asarray(m, dtype=np.float64) @ np.asarray(n, dtype=np.float64)
 
 
 def misorientation(euler1, euler2, space_group: int):
@@ -981,12 +1016,23 @@ def _make_symmetries_torch(space_group: int, dtype, device) -> torch.Tensor:
     return torch.tensor(sym, dtype=dtype, device=device)
 
 
-def _fundamental_zone_torch(quat: torch.Tensor, space_group: int) -> torch.Tensor:
-    """Reduce quaternion(s) to the fundamental zone for `space_group`."""
-    sym = _make_symmetries_torch(space_group, quat.dtype, quat.device)  # (n_sym, 4)
+def _fundamental_zone_torch(quat: torch.Tensor, space_group: int | None, *, sym=None) -> torch.Tensor:
+    """Reduce quaternion(s) to the fundamental zone for `space_group`.
+
+    If `sym` is supplied (shape (n_sym, 4)), skip the per-call symmetry-table
+    lookup. Falls back to `_make_symmetries_torch(space_group, ...)` otherwise.
+    """
+    if sym is not None:
+        sym_t = _to_torch(sym, dtype=quat.dtype, device=quat.device)
+        if sym_t.ndim != 2 or sym_t.shape[1] != 4:
+            raise ValueError(f"sym must have shape (n_sym, 4); got {tuple(sym_t.shape)}")
+    else:
+        if space_group is None:
+            raise ValueError("_fundamental_zone_torch requires space_group or sym")
+        sym_t = _make_symmetries_torch(space_group, quat.dtype, quat.device)  # (n_sym, 4)
     # Broadcast: q is (..., 4); sym is (n_sym, 4). Result: (..., n_sym, 4).
-    q_b = quat.unsqueeze(-2).expand(*quat.shape[:-1], sym.shape[0], 4)
-    s_b = sym.expand(*quat.shape[:-1], sym.shape[0], 4)
+    q_b = quat.unsqueeze(-2).expand(*quat.shape[:-1], sym_t.shape[0], 4)
+    s_b = sym_t.expand(*quat.shape[:-1], sym_t.shape[0], 4)
     qts = _quaternion_product_torch(q_b, s_b)  # (..., n_sym, 4)
     # Pick the sym op with maximum w (qt[..., 0]).
     _, idx = torch.max(qts[..., 0], dim=-1, keepdim=True)

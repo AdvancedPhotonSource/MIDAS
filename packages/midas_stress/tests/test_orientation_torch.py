@@ -21,6 +21,8 @@ from midas_stress.orientation import (
     euler_to_orient_mat,
     euler_to_orient_mat_batch,
     fundamental_zone,
+    make_symmetries,
+    matrix_mult_f33,
     misorientation_om,
     misorientation_om_batch,
     misorientation_quat_batch,
@@ -275,3 +277,106 @@ def test_cross_backend_random_eulers():
     np_oms = euler_to_orient_mat_batch(eulers)
     t_oms = euler_to_orient_mat_batch(torch.tensor(eulers, dtype=torch.float64))
     np.testing.assert_allclose(t_oms.numpy(), np_oms, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# matrix_mult_f33 + fundamental_zone(sym=) torch parity
+# ---------------------------------------------------------------------------
+
+
+def test_matrix_mult_f33_torch_matches_numpy():
+    rng = np.random.default_rng(123)
+    A = rng.standard_normal((3, 3))
+    B = rng.standard_normal((3, 3))
+    np_out = matrix_mult_f33(A, B)
+    t_out = matrix_mult_f33(torch.tensor(A), torch.tensor(B))
+    assert isinstance(t_out, torch.Tensor)
+    _eq(t_out, np_out, atol=1e-14)
+
+
+def test_matrix_mult_f33_torch_batched():
+    rng = np.random.default_rng(321)
+    A_batch = torch.tensor(rng.standard_normal((5, 3, 3)))
+    B_batch = torch.tensor(rng.standard_normal((5, 3, 3)))
+    out = matrix_mult_f33(A_batch, B_batch)
+    assert out.shape == (5, 3, 3)
+    for i in range(5):
+        _eq(out[i], A_batch[i].numpy() @ B_batch[i].numpy(), atol=1e-14)
+
+
+def test_matrix_mult_f33_torch_is_differentiable():
+    A = torch.eye(3, dtype=torch.float64, requires_grad=True)
+    B = torch.tensor([[1.0, 2.0, 3.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                     dtype=torch.float64)
+    out = matrix_mult_f33(A, B)
+    out.sum().backward()
+    assert A.grad is not None and A.grad.shape == (3, 3)
+
+
+def test_fundamental_zone_torch_with_precomputed_sym():
+    """Torch path: caller-supplied sym tensor matches the default lookup."""
+    q = torch.tensor([0.1, 0.4, 0.5, 0.7], dtype=torch.float64)
+    q = q / torch.linalg.norm(q)
+    _, sym_list = make_symmetries(225)
+    sym_tensor = torch.tensor(sym_list, dtype=torch.float64)
+    q_default = fundamental_zone(q, 225)
+    q_with_sym = fundamental_zone(q, sym=sym_tensor)
+    _eq(q_with_sym, q_default.numpy(), atol=1e-14)
+
+
+def test_fundamental_zone_torch_sym_dtype_device_follows_input():
+    """The torch path should move the sym table onto the input's device/dtype."""
+    q = torch.tensor([0.5, 0.5, 0.5, 0.5], dtype=torch.float32)
+    _, sym_list = make_symmetries(225)
+    # Pass sym as a list (numpy/list); the torch path must coerce to fp32 / CPU.
+    out = fundamental_zone(q, sym=sym_list)
+    assert out.dtype == torch.float32
+    assert out.device == q.device
+
+
+# ---------------------------------------------------------------------------
+# Device-portability gates: skip when the device isn't present
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_matrix_mult_f33_runs_on_cuda():
+    A = torch.eye(3, dtype=torch.float64, device="cuda")
+    B = torch.tensor([[1.0, 2.0, 3.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                     dtype=torch.float64, device="cuda")
+    out = matrix_mult_f33(A, B)
+    assert out.device.type == "cuda"
+    _eq(out.cpu(), B.cpu().numpy(), atol=1e-14)
+
+
+@pytest.mark.skipif(not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()),
+                    reason="MPS not available")
+def test_matrix_mult_f33_runs_on_mps():
+    A = torch.eye(3, dtype=torch.float32, device="mps")
+    B = torch.tensor([[1.0, 2.0, 3.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                     dtype=torch.float32, device="mps")
+    out = matrix_mult_f33(A, B)
+    assert out.device.type == "mps"
+    np.testing.assert_allclose(out.cpu().numpy(), B.cpu().numpy(), atol=1e-6)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_fundamental_zone_with_sym_runs_on_cuda():
+    q = torch.tensor([0.1, 0.4, 0.5, 0.7], dtype=torch.float64, device="cuda")
+    q = q / torch.linalg.norm(q)
+    _, sym_list = make_symmetries(225)
+    sym = torch.tensor(sym_list, dtype=torch.float64, device="cuda")
+    out = fundamental_zone(q, sym=sym)
+    assert out.device.type == "cuda"
+    _eq(out.cpu(), fundamental_zone(q.cpu(), sym=sym.cpu()).numpy(), atol=1e-14)
+
+
+@pytest.mark.skipif(not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()),
+                    reason="MPS not available")
+def test_fundamental_zone_with_sym_runs_on_mps():
+    q = torch.tensor([0.1, 0.4, 0.5, 0.7], dtype=torch.float32, device="mps")
+    q = q / torch.linalg.norm(q)
+    _, sym_list = make_symmetries(225)
+    sym = torch.tensor(sym_list, dtype=torch.float32, device="mps")
+    out = fundamental_zone(q, sym=sym)
+    assert out.device.type == "mps"

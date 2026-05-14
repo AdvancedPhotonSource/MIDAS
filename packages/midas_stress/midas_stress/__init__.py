@@ -70,6 +70,12 @@ from .orientation import (
     make_symmetries,
     axis_angle_to_orient_mat,
     rodrigues_to_orient_mat,
+    matrix_mult_f33,
+)
+
+# --- Diffraction geometry helpers ---
+from .diffraction import (
+    calc_eta_angle_all,
 )
 
 # --- Frame conversions ---

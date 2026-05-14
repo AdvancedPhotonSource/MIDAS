@@ -18,6 +18,7 @@ from midas_stress.orientation import (
     fundamental_zone,
     axis_angle_to_orient_mat,
     rodrigues_to_orient_mat,
+    matrix_mult_f33,
 )
 
 
@@ -120,6 +121,71 @@ class TestFundamentalZone:
         q1 = fundamental_zone(q, 225)
         q2 = fundamental_zone(q1, 225)
         np.testing.assert_allclose(q1, q2, atol=1e-12)
+
+    def test_precomputed_sym_matches_default(self):
+        """Caller-supplied sym table must give identical output to the default path."""
+        q = np.array([0.1, 0.4, 0.5, 0.7], dtype=np.float64)
+        q = q / np.linalg.norm(q)
+        n_sym, sym = make_symmetries(225)
+        sym_arr = np.asarray(sym, dtype=np.float64)
+        q_default = fundamental_zone(q, 225)
+        q_with_sym = fundamental_zone(q, sym=sym_arr)
+        np.testing.assert_allclose(q_with_sym, q_default, atol=1e-14)
+
+    def test_precomputed_sym_overrides_space_group(self):
+        """If both `space_group` and `sym` are passed, `sym` wins (documented contract)."""
+        q = np.array([0.3, 0.2, 0.6, 0.7], dtype=np.float64)
+        q = q / np.linalg.norm(q)
+        _, sym_cubic = make_symmetries(225)
+        # Result with cubic sym should equal calling with space_group=225 alone.
+        q_a = fundamental_zone(q, sym=np.asarray(sym_cubic, dtype=np.float64))
+        # Sending a different space_group along with the cubic sym should not change the result.
+        q_b = fundamental_zone(q, space_group=1, sym=np.asarray(sym_cubic, dtype=np.float64))
+        np.testing.assert_allclose(q_a, q_b, atol=1e-14)
+
+    def test_missing_both_args_raises(self):
+        with pytest.raises(ValueError, match="space_group"):
+            fundamental_zone([1.0, 0.0, 0.0, 0.0])
+
+    def test_bad_sym_shape_raises(self):
+        with pytest.raises(ValueError, match="shape"):
+            fundamental_zone([1.0, 0.0, 0.0, 0.0], sym=np.zeros((3, 3)))
+
+
+class TestMatrixMultF33:
+    def test_identity_left(self):
+        M = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float64)
+        out = matrix_mult_f33(np.eye(3), M)
+        np.testing.assert_allclose(out, M, atol=1e-14)
+
+    def test_identity_right(self):
+        M = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float64)
+        out = matrix_mult_f33(M, np.eye(3))
+        np.testing.assert_allclose(out, M, atol=1e-14)
+
+    def test_matches_numpy_matmul(self):
+        rng = np.random.default_rng(42)
+        A = rng.standard_normal((3, 3))
+        B = rng.standard_normal((3, 3))
+        np.testing.assert_allclose(matrix_mult_f33(A, B), A @ B, atol=1e-14)
+
+    def test_matches_calcmiso_reference(self):
+        """Bit-parity check against utils/calcMiso.MatrixMultF33 reference impl."""
+        rng = np.random.default_rng(7)
+        A = rng.standard_normal((3, 3))
+        B = rng.standard_normal((3, 3))
+        # Inlined reference from utils/calcMiso.py:304-310 to avoid sys.path tricks.
+        ref = np.zeros((3, 3))
+        for r in range(3):
+            ref[r, 0] = A[r, 0]*B[0, 0] + A[r, 1]*B[1, 0] + A[r, 2]*B[2, 0]
+            ref[r, 1] = A[r, 0]*B[0, 1] + A[r, 1]*B[1, 1] + A[r, 2]*B[2, 1]
+            ref[r, 2] = A[r, 0]*B[0, 2] + A[r, 1]*B[1, 2] + A[r, 2]*B[2, 2]
+        np.testing.assert_allclose(matrix_mult_f33(A, B), ref, atol=1e-14)
+
+    def test_accepts_list_input(self):
+        A = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        B = [[2, 3, 4], [5, 6, 7], [8, 9, 10]]
+        np.testing.assert_allclose(matrix_mult_f33(A, B), np.asarray(B, dtype=float), atol=1e-14)
 
 
 class TestAxisAngle:
