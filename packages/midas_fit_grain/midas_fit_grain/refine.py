@@ -245,18 +245,58 @@ def refine_grain(
             omega_tolerance=omega_tol, eta_tolerance=eta_tol,
         )
 
+    # --- Scan-aware position-mode handling (pf-HEDM) -----------------
+    # When scan mode is active (cfg.scan_pos_tol_um > 0) the position
+    # has two refinement options per plan §1e:
+    #   "fixed"          → position is locked to the voxel center
+    #                      (matches C IndexerScanningOMP behavior).
+    #   "voxel_bounded"  → position refines inside
+    #                      [init_y − beam_size/2, init_y + beam_size/2]
+    #                      along Y; clamp post-phase. New v1 feature.
+    # FF runs leave scan_pos_tol_um == 0 ⇒ position_mode ignored,
+    # legacy behavior preserved.
+    _scan_mode = float(getattr(cfg, "scan_pos_tol_um", 0.0)) > 0.0
+    _pos_mode = getattr(cfg, "position_mode", "fixed") if _scan_mode else "refine"
+    _beam_size = float(getattr(cfg, "beam_size_um", 0.0))
+
+    def _maybe_clamp_pos_to_voxel_bound():
+        """Project pos_scaled.data into the voxel-bounded box along Y.
+
+        No-op outside voxel_bounded mode. Y is dim 1 of pos (PF scans
+        run along Y per P0 audit §1a).
+        """
+        if _pos_mode != "voxel_bounded" or _beam_size <= 0:
+            return
+        # Convert bounds (in µm) into pos_scaled units.
+        half = (_beam_size / 2.0) / pos_scale
+        init_y_scaled = float(init_position[1].item()) / pos_scale
+        lb = init_y_scaled - half
+        ub = init_y_scaled + half
+        with torch.no_grad():
+            pos_scaled[1].clamp_(lb, ub)
+
     if cfg.mode == "all_at_once":
-        _run_phase([pos_scaled, euler, lattice])
+        if _pos_mode == "fixed":
+            _run_phase([euler, lattice])
+        else:
+            _run_phase([pos_scaled, euler, lattice])
+            _maybe_clamp_pos_to_voxel_bound()
     elif cfg.mode == "iterative":
         ph_pos, ph_or, ph_lat, ph_joint = cfg.phase_steps
-        _run_phase([pos_scaled], max_iter=ph_pos * 5 + 5)
-        _rematch()
+        if _pos_mode != "fixed":
+            _run_phase([pos_scaled], max_iter=ph_pos * 5 + 5)
+            _maybe_clamp_pos_to_voxel_bound()
+            _rematch()
         _run_phase([euler], max_iter=ph_or * 5 + 5)
         _rematch()
         _run_phase([lattice], max_iter=ph_lat * 5 + 5)
         _rematch()
         # Final joint polish — no further re-match, per spec.
-        _run_phase([pos_scaled, euler, lattice], max_iter=ph_joint * 5 + 5)
+        if _pos_mode == "fixed":
+            _run_phase([euler, lattice], max_iter=ph_joint * 5 + 5)
+        else:
+            _run_phase([pos_scaled, euler, lattice], max_iter=ph_joint * 5 + 5)
+            _maybe_clamp_pos_to_voxel_bound()
     else:
         raise ValueError(f"unknown mode {cfg.mode!r}")
 

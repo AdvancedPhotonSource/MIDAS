@@ -121,6 +121,23 @@ class FitConfig:
     compile: "bool | str" = False           # passed to HEDMForwardModel(compile=)
                                             # CUDA-only; ignored on CPU/MPS
 
+    # --- Scan-aware (pf-HEDM) extensions ---
+    # Default-off ⇒ FF behavior unchanged on every existing test.
+    # ``scan_positions_path`` is the path to ``positions.csv`` (1-D Y
+    # values, µm). ``scan_pos_tol_um`` enables the per-voxel scan-position
+    # filter in the observation builder when > 0 (matches the kernel
+    # extension we added to midas-index.compute.matching at P5a).
+    # ``position_mode`` controls position refinement: "fixed" matches the
+    # C IndexerScanningOMP behavior (voxel position is locked to the scan
+    # grid) and "voxel_bounded" is new functionality where positions can
+    # refine inside ``voxel_center ± beam_size/2`` along Y, jointly with
+    # orientation / strain via ``mode="all_at_once"``. See plan §1e + §7b.
+    scan_positions_path: str = ""           # path to positions.csv; "" ⇒ FF
+    scan_pos_tol_um: float = 0.0            # 0 ⇒ filter disabled
+    friedel_symmetric_scan_filter: bool = True
+    beam_size_um: float = 0.0               # bound for voxel_bounded mode
+    position_mode: str = "fixed"            # "fixed" | "voxel_bounded"
+
     # --- Convenience ---
     @property
     def n_rings(self) -> int:
