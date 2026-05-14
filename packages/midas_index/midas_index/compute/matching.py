@@ -88,7 +88,7 @@ def build_ome_margins(
 def compare_spots(
     theor: torch.Tensor,             # (N, T, 14) float
     valid: torch.Tensor,             # (N, T) bool
-    obs: torch.Tensor,               # (n_obs, 9) float
+    obs: torch.Tensor,               # (n_obs, 9) float — or (n_obs, 10) when scanning
     bin_data: torch.Tensor,          # int32 flat — Data.bin
     bin_ndata: torch.Tensor,         # int32 flat — nData.bin (interleaved count, offset)
     *,
@@ -107,6 +107,11 @@ def compare_spots(
     strategy: str = "dense",          # "dense" or "jagged"
     chunk_size: int = 65536,          # for "jagged": rows of N processed per chunk
     max_n_cap: int | None = None,     # if known, skip the per-call n_per.max() sync
+    # --- Scan-aware (pf-HEDM) extensions ---
+    scan_positions: torch.Tensor | None = None,  # (n_scans,) 1-D Y values (µm)
+    voxel_xy: torch.Tensor | None = None,         # (N, 2) per-tuple (x, y) in µm
+    scan_pos_tol_um: float = 0.0,                 # 0 ⇒ filter disabled (FF default)
+    friedel_symmetric_scan_filter: bool = True,   # production default; OFF for C parity
 ) -> MatchResult:
     """Vectorized binned matching. See module docstring for tie-break semantics.
 
@@ -135,6 +140,10 @@ def compare_spots(
             distance=distance, pos=pos,
             chunk_size=chunk_size,
             max_n_cap=max_n_cap,
+            scan_positions=scan_positions,
+            voxel_xy=voxel_xy,
+            scan_pos_tol_um=scan_pos_tol_um,
+            friedel_symmetric_scan_filter=friedel_symmetric_scan_filter,
         )
     device = theor.device
     dtype = theor.dtype
@@ -220,6 +229,49 @@ def compare_spots(
 
     ok = in_bin & rad_ok & radial_ok & eta_ok & valid.unsqueeze(-1)            # (N, T, M)
 
+    # 4b. Scan-position filter (pf-HEDM mode). Default-off (tol == 0) — FF
+    # behavior is unchanged. When active, drop candidates whose observed
+    # scan position is inconsistent with the voxel's lab-frame (x, y).
+    #
+    # Filter expression (from IndexerScanningOMP.c:453-459):
+    #     s_proj = xThis * cos(omega) + yThis * sin(omega)
+    #     keep if |s_proj − ypos[scannrobs]| < scan_pos_tol_um
+    #
+    # Production default is **Friedel-symmetric** per plan §1b:
+    #     keep if (|s_proj − ypos| < tol) OR (|−s_proj − ypos| < tol)
+    # The single-sided form (Friedel OFF) is required for the bit-exact
+    # parity gate against IndexerScanningOMP.
+    if (
+        scan_pos_tol_um > 0
+        and scan_positions is not None
+        and voxel_xy is not None
+    ):
+        if obs.shape[-1] < 10:
+            raise ValueError(
+                "scan-aware mode requires obs with 10 columns (Spots.bin PF "
+                "layout); got %d." % obs.shape[-1]
+            )
+        # Per-tuple voxel (x, y) — shape (N, 1) for broadcast across T.
+        v_x = voxel_xy[..., 0].view(N, 1).to(dtype=dtype, device=device)
+        v_y = voxel_xy[..., 1].view(N, 1).to(dtype=dtype, device=device)
+        # Project voxel onto rotated scan axis per-theor-spot using omega (deg → rad).
+        omega_rad = omega * DEG2RAD                                            # (N, T)
+        s_proj = v_x * torch.cos(omega_rad) + v_y * torch.sin(omega_rad)        # (N, T)
+
+        # Per-candidate scan position (col 9 of obs is scanNr, indexes scan_positions).
+        obs_scan_idx = obs[..., 9].to(torch.int64)                              # (n_obs,)
+        scan_pos_arr = scan_positions.to(dtype=dtype, device=device)
+        cand_scan_idx = obs_scan_idx[spot_rows]                                 # (N, T, M)
+        cand_scan_pos = scan_pos_arr[cand_scan_idx.clamp(0, scan_pos_arr.numel() - 1)]
+
+        diff = (s_proj.unsqueeze(-1) - cand_scan_pos).abs()
+        scan_ok = diff < scan_pos_tol_um
+        if friedel_symmetric_scan_filter:
+            # Friedel pair: matching spot may appear at +scan or -scan offset.
+            diff_friedel = (s_proj.unsqueeze(-1) + cand_scan_pos).abs()
+            scan_ok = scan_ok | (diff_friedel < scan_pos_tol_um)
+        ok = ok & scan_ok                                                       # (N, T, M)
+
     # 5. Tie-break on smallest |Δomega|
     diff_ome = (omega.unsqueeze(-1) - cand_ome).abs()
     diff_ome_masked = torch.where(
@@ -301,6 +353,10 @@ def _compare_spots_jagged(
     pos: torch.Tensor | None,
     chunk_size: int,
     max_n_cap: int | None = None,
+    scan_positions: torch.Tensor | None = None,
+    voxel_xy: torch.Tensor | None = None,
+    scan_pos_tol_um: float = 0.0,
+    friedel_symmetric_scan_filter: bool = True,
 ) -> MatchResult:
     """Memory-bounded variant of `compare_spots`: chunks N axis into
     `chunk_size` slabs and concatenates per-slab MatchResults.
@@ -314,6 +370,7 @@ def _compare_spots_jagged(
         stop = min(start + chunk_size, N)
         sl = slice(start, stop)
         chunk_pos = pos[sl] if pos is not None else None
+        chunk_voxel_xy = voxel_xy[sl] if voxel_xy is not None else None
         chunks.append(
             compare_spots(
                 theor=theor[sl], valid=valid[sl], obs=obs,
@@ -327,6 +384,10 @@ def _compare_spots_jagged(
                 distance=distance, pos=chunk_pos,
                 strategy="dense",
                 max_n_cap=max_n_cap,
+                scan_positions=scan_positions,
+                voxel_xy=chunk_voxel_xy,
+                scan_pos_tol_um=scan_pos_tol_um,
+                friedel_symmetric_scan_filter=friedel_symmetric_scan_filter,
             )
         )
     return MatchResult(

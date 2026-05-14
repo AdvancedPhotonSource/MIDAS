@@ -8,6 +8,13 @@ from .csv import (
     read_spots_to_index_csv,
     write_spots_to_index_csv,
 )
+from .consolidated import (
+    ConsolidatedReadResult,
+    header_size_bytes,
+    read_index_best_all,
+    split_records_by_voxel,
+    write_index_best_all,
+)
 from .output import (
     close_output_files,
     open_output_files,
@@ -29,4 +36,10 @@ __all__ = [
     "close_output_files",
     "write_seed_record",
     "write_block",
+    # Scan-aware (pf-HEDM) consolidated I/O — P5
+    "ConsolidatedReadResult",
+    "header_size_bytes",
+    "read_index_best_all",
+    "split_records_by_voxel",
+    "write_index_best_all",
 ]

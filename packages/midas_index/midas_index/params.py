@@ -90,6 +90,21 @@ class IndexerParams:
         default_factory=dict,
     )
 
+    # --- Scan-aware (pf-HEDM) extensions ---
+    # Default values keep behavior identical to FF mode:
+    #   scan_pos_tol_um = 0.0  → filter disabled
+    #   multi_solution_output = False → today's single-solution IndexBest.bin
+    # When ``scan_positions_path`` is set, the indexer reads a 1-D Y-position
+    # array (n_scans,) and iterates over the (n_scans × n_scans) Cartesian
+    # voxel grid; the matching kernel applies the per-voxel scan-position
+    # filter ``|s_proj − ypos| < tol`` (Friedel-symmetric by default; flip
+    # off via ``friedel_symmetric_scan_filter=False`` for the C-parity gate).
+    # See P0 audit §1b/§1d in the plan file for the binary-layout contract.
+    scan_positions_path: str = ""           # path to positions.csv; "" disables scan mode
+    scan_pos_tol_um: float = 0.0            # 0 ⇒ kernel disables filter (FF default)
+    friedel_symmetric_scan_filter: bool = True   # production default; OFF for C-parity gate
+    multi_solution_output: bool = False     # True → emit IndexBest_all.bin + friends
+
     def get_ring_radius(self, ring_nr: int) -> float:
         """Sparse lookup mirroring `Params.RingRadii[ring_nr]` in C."""
         return self.RingRadii.get(ring_nr, 0.0)
