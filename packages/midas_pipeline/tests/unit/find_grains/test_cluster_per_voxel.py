@@ -1,0 +1,141 @@
+"""Per-voxel clustering — splits two grains, collapses symmetry variants."""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from midas_pipeline.find_grains import per_voxel_cluster
+
+
+def make_inputs(OMs, confs, ias):
+    """Build the (OMs, confs, ias, keys) tuple for per_voxel_cluster."""
+    OMs = np.asarray(OMs, dtype=np.float64)
+    n = OMs.shape[0]
+    keys = np.zeros((n, 4), dtype=np.uint64)
+    # Seed keys with row index so we can recover which row was picked.
+    keys[:, 0] = np.arange(n, dtype=np.uint64)
+    return OMs, np.asarray(confs, dtype=np.float64), np.asarray(ias, dtype=np.float64), keys
+
+
+def test_two_grains_30deg_apart_split(axis_angle_om):
+    """Two grain orientations 30° apart in cubic crystal: should yield 2 clusters."""
+    g1 = axis_angle_om(np.array([0, 0, 1]), 0.0)
+    g2 = axis_angle_om(np.array([0, 0, 1]), 30.0)
+    OMs = np.vstack([g1, g1, g2, g2])
+    confs = np.array([0.9, 0.8, 0.7, 0.6])
+    ias = np.array([0.1, 0.2, 0.3, 0.4])
+    OMs, confs, ias, keys = make_inputs(OMs, confs, ias)
+    result = per_voxel_cluster(
+        OMs, confs, ias, keys,
+        space_group=225,  # FCC cubic
+        max_ang_deg=1.0,
+    )
+    # Two distinct grains → 2 clusters.
+    assert result.unique_keys.shape[0] == 2
+    # The reps should be the highest-conf of each cluster: row 0 (0.9) and row 2 (0.7).
+    rep_ids = sorted(int(r[0]) for r in result.unique_keys)
+    assert rep_ids == [0, 2]
+    # best_row points at the overall best (row 0, conf 0.9).
+    assert result.best_row == 0
+
+
+def test_two_grains_within_maxang_collapse(axis_angle_om):
+    """If grains are within max_ang_deg they fold into one cluster."""
+    g1 = axis_angle_om(np.array([0, 0, 1]), 0.0)
+    g2 = axis_angle_om(np.array([0, 0, 1]), 0.2)   # 0.2° rotation, sub-threshold
+    OMs = np.vstack([g1, g2])
+    confs = np.array([0.5, 0.9])
+    ias = np.array([0.5, 0.1])
+    OMs, confs, ias, keys = make_inputs(OMs, confs, ias)
+    result = per_voxel_cluster(
+        OMs, confs, ias, keys,
+        space_group=225,
+        max_ang_deg=1.0,
+    )
+    # One cluster — the higher-conf representative wins.
+    assert result.unique_keys.shape[0] == 1
+    assert int(result.unique_keys[0, 0]) == 1  # row 1 = higher conf
+
+
+def test_symmetry_variant_collapses_with_cubic(axis_angle_om):
+    """A 90° rotation about z is a symmetry-equivalent OM in cubic; must collapse."""
+    g1 = axis_angle_om(np.array([0, 0, 1]), 0.0)
+    g2 = axis_angle_om(np.array([0, 0, 1]), 90.0)  # cubic-symmetric to g1
+    OMs = np.vstack([g1, g2])
+    confs = np.array([0.7, 0.7])
+    ias = np.array([0.5, 0.5])
+    OMs, confs, ias, keys = make_inputs(OMs, confs, ias)
+    result = per_voxel_cluster(
+        OMs, confs, ias, keys,
+        space_group=225,
+        max_ang_deg=1.0,
+    )
+    # Cubic symmetry should fold these to one cluster.
+    assert result.unique_keys.shape[0] == 1
+
+
+def test_empty_input_returns_no_best():
+    OMs = np.empty((0, 9))
+    confs = np.empty(0)
+    ias = np.empty(0)
+    keys = np.empty((0, 4), dtype=np.uint64)
+    result = per_voxel_cluster(OMs, confs, ias, keys, space_group=225, max_ang_deg=1.0)
+    assert result.best_row == -1
+    assert result.unique_keys.shape[0] == 0
+
+
+def test_tie_break_lower_ia_wins(axis_angle_om):
+    """Best-row: equal conf, lower IA wins."""
+    g1 = axis_angle_om(np.array([0, 0, 1]), 0.0)
+    OMs = np.vstack([g1, g1, g1])
+    confs = np.array([0.5, 0.5, 0.4])
+    ias = np.array([0.3, 0.1, 0.05])    # row 1 has lowest IA among the conf-0.5 pair
+    OMs, confs, ias, keys = make_inputs(OMs, confs, ias)
+    result = per_voxel_cluster(
+        OMs, confs, ias, keys,
+        space_group=225, max_ang_deg=1.0,
+    )
+    # Best row = 1 (conf 0.5, IA 0.1).
+    assert result.best_row == 1
+
+
+def test_min_conf_filters_rows(axis_angle_om):
+    """When min_conf > 0, below-threshold rows are skipped from clustering."""
+    g1 = axis_angle_om(np.array([0, 0, 1]), 0.0)
+    g2 = axis_angle_om(np.array([0, 0, 1]), 30.0)
+    OMs = np.vstack([g1, g1, g2])
+    confs = np.array([0.9, 0.05, 0.8])   # row 1 is below 0.5 threshold
+    ias = np.array([0.1, 0.1, 0.1])
+    OMs, confs, ias, keys = make_inputs(OMs, confs, ias)
+    result = per_voxel_cluster(
+        OMs, confs, ias, keys,
+        space_group=225, max_ang_deg=1.0,
+        min_conf=0.5,
+    )
+    # Two clusters (row 1 was filtered out, but g1 still has row 0 and g2 has row 2).
+    assert result.unique_keys.shape[0] == 2
+
+
+def test_torch_per_voxel_matches_numpy(axis_angle_om):
+    """Torch path produces same cluster assignments as numpy."""
+    torch = pytest.importorskip("torch")
+    g1 = axis_angle_om(np.array([0, 0, 1]), 0.0)
+    g2 = axis_angle_om(np.array([0, 0, 1]), 30.0)
+    OMs_np = np.vstack([g1, g1, g2])
+    confs = np.array([0.9, 0.8, 0.7])
+    ias = np.array([0.1, 0.2, 0.3])
+    keys = np.array([[i, 0, 0, 0] for i in range(3)], dtype=np.uint64)
+
+    res_np = per_voxel_cluster(OMs_np, confs, ias, keys, space_group=225, max_ang_deg=1.0)
+    from midas_pipeline.find_grains import per_voxel_cluster_torch
+    OMs_t = torch.tensor(OMs_np, dtype=torch.float64)
+    res_t = per_voxel_cluster_torch(
+        OMs_t, torch.tensor(confs, dtype=torch.float64),
+        torch.tensor(ias, dtype=torch.float64),
+        keys, space_group=225, max_ang_deg=1.0,
+    )
+    # Compare keys arrays (host-side identical).
+    np.testing.assert_array_equal(res_np.unique_keys, res_t.unique_keys)
+    # OMs in torch path should be tensors.
+    assert isinstance(res_t.unique_OMs, torch.Tensor)
