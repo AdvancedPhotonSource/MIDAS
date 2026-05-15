@@ -259,11 +259,34 @@ class Indexer:
         v_start = voxel_block_nr * block_size
         v_end = min(v_start + block_size, n_vox)
 
-        # 5. Initial spot-ids list (same for every voxel; the scan filter
-        # decides per-voxel which spots are admissible).
-        spot_ids = torch.as_tensor(obs["spot_ids"], dtype=torch.int64)
-        if n_spots_to_index is not None:
-            spot_ids = spot_ids[:n_spots_to_index]
+        # 5. Build the per-voxel seed pool. Scanning mode mirrors
+        # IndexerScanningOMP.c:1687-1693 + 1786-1793: the seed pool is ALL
+        # obs spots with ObsSpotsLab[5] == RingToIndex. SpotsToIndex.csv is
+        # NOT consulted in scanning mode (the C scanning indexer doesn't
+        # read it either). Falls back to obs["spot_ids"] only when
+        # RingToIndex==0 (older configs that didn't set it).
+        obs_np = np.asarray(obs["spots"])
+        if obs_np.shape[1] < 10:
+            raise ValueError(
+                "scanning indexer needs 10-col Spots.bin (PF layout); got "
+                f"{obs_np.shape[1]} cols. Check Spots.bin emitter."
+            )
+        ring_to_index = int(getattr(self.params, "RingToIndex", 0))
+        if ring_to_index > 0:
+            ring_mask = obs_np[:, 5].astype(np.int64) == ring_to_index
+            seed_obs_rows_np = np.flatnonzero(ring_mask).astype(np.int64)
+            seed_ids_np = obs_np[seed_obs_rows_np, 4].astype(np.int64)
+        else:
+            seed_ids_np = np.asarray(obs["spot_ids"]).astype(np.int64)
+            if n_spots_to_index is not None:
+                seed_ids_np = seed_ids_np[:n_spots_to_index]
+            obs_id_to_row = {
+                int(v): i for i, v in enumerate(obs_np[:, 4].astype(np.int64))
+            }
+            seed_obs_rows_np = np.array(
+                [obs_id_to_row.get(int(sid), -1) for sid in seed_ids_np],
+                dtype=np.int64,
+            )
 
         # 5b. Per-seed scan-aware pre-filter (mirrors IndexerScanningOMP.c:1786-1793).
         # Builds (omega_rad, scan_y_obs) for every seed once, before the voxel
@@ -273,26 +296,13 @@ class Indexer:
         # full orientation grid + compare_spots, even those that the C
         # reference would have rejected in O(1) at the outer loop — dominant
         # perf hotspot in the per-voxel solve.
-        obs_np = np.asarray(obs["spots"])
-        if obs_np.shape[1] < 10:
-            raise ValueError(
-                "scanning indexer needs 10-col Spots.bin (PF layout); got "
-                f"{obs_np.shape[1]} cols. Check Spots.bin emitter."
-            )
-        obs_id_to_row = {int(v): i for i, v in enumerate(obs_np[:, 4].astype(np.int64))}
-        seed_ids_np = spot_ids.cpu().numpy().astype(np.int64)
-        seed_obs_rows = np.array(
-            [obs_id_to_row.get(int(sid), -1) for sid in seed_ids_np], dtype=np.int64,
-        )
-        seed_has_obs = seed_obs_rows >= 0
-        # Use row 0 as a safe placeholder for unmatched seeds; mask anyway.
-        seed_obs_rows_safe = np.where(seed_has_obs, seed_obs_rows, 0)
+        seed_has_obs = seed_obs_rows_np >= 0
+        seed_obs_rows_safe = np.where(seed_has_obs, seed_obs_rows_np, 0)
         seed_omega_deg = obs_np[seed_obs_rows_safe, 2]
         seed_scan_nr = obs_np[seed_obs_rows_safe, 9].astype(np.int64)
         seed_omega_rad_np = np.deg2rad(seed_omega_deg)
         seed_sin_ome = np.sin(seed_omega_rad_np)
         seed_cos_ome = np.cos(seed_omega_rad_np)
-        # ypos[seed_scan_nr] — np ndarray (n_seeds,)
         scan_positions_np = scan_positions_t.cpu().numpy().astype(np.float64)
         n_scans_pos = scan_positions_np.size
         seed_scan_nr_clamped = np.clip(seed_scan_nr, 0, n_scans_pos - 1)
@@ -304,15 +314,18 @@ class Indexer:
 
         # 6. Per-voxel loop. Collect each voxel's seed results into a
         # (n_solutions, 16) float64 record block matching the C
-        # IndexerScanningOMP consolidated layout.
+        # IndexerScanningOMP consolidated layout. Cols 11-13 (posX/Y/Z) are
+        # written as the voxel center per IndexerScanningOMP.c — NOT the
+        # refined per-seed position. PF refinement (midas-fit-grain) takes
+        # voxel center as a starting point and refines downstream.
         per_voxel_records: list[np.ndarray] = [
             np.zeros((0, 16), dtype=np.float64) for _ in range(n_vox)
         ]
         for v in range(v_start, v_end):
             ctx.current_voxel_xy = voxel_xy_table[v]
-            voxel_seeds = spot_ids
+            vx, vy = voxel_xy_np[v]
+            voxel_seeds_ids = seed_ids_np
             if pre_filter_enabled:
-                vx, vy = voxel_xy_np[v]
                 s_proj = vx * seed_sin_ome + vy * seed_cos_ome
                 diff = np.abs(s_proj - seed_scan_y_obs)
                 ok = diff <= scan_pos_tol
@@ -322,22 +335,25 @@ class Indexer:
                 ok = ok & seed_has_obs
                 if not ok.any():
                     continue  # voxel has no seeds; record block stays empty
-                voxel_seeds = torch.as_tensor(
-                    seed_ids_np[ok], dtype=torch.int64,
-                )
+                voxel_seeds_ids = seed_ids_np[ok]
+            voxel_seeds = torch.as_tensor(voxel_seeds_ids, dtype=torch.int64)
             voxel_result = run_block(
                 ctx, voxel_seeds,
                 block_nr=0, n_blocks=1,
                 seed_group_size=seed_group_size,
             )
-            per_voxel_records[v] = _seeds_to_record_block(voxel_result)
+            per_voxel_records[v] = _seeds_to_record_block(
+                voxel_result, voxel_xyz=(float(vx), float(vy), 0.0),
+            )
 
         # 7. Write consolidated output.
         write_index_best_all(out_path, per_voxel_records)
         return v_end - v_start
 
 
-def _seeds_to_record_block(result) -> np.ndarray:
+def _seeds_to_record_block(
+    result, *, voxel_xyz: tuple[float, float, float] | None = None,
+) -> np.ndarray:
     """Convert an IndexerResult into the (n_solutions, 16) record layout.
 
     Column map (matches the IndexerScanningOMP.c writer / pf_MIDAS.py
@@ -346,25 +362,32 @@ def _seeds_to_record_block(result) -> np.ndarray:
         col 0  : seed spot id (mirrors the C convention)
         col 1  : avg internal-angle score (radians)
         col 2-10: 9-element orientation matrix (row-major 3×3)
-        col 11 : posX (sample-frame x, µm) — from best_pos[0]
-        col 12 : posY (sample-frame y, µm) — from best_pos[1]
-        col 13 : posZ (sample-frame z, µm) — from best_pos[2]
+        col 11 : posX — voxel center x (µm) in scanning mode; best_pos[0] otherwise
+        col 12 : posY — voxel center y (µm) in scanning mode; best_pos[1] otherwise
+        col 13 : posZ — voxel center z (µm, =0) in scanning mode; best_pos[2] otherwise
         col 14 : nExpected (total predicted spots, denominator)
         col 15 : nMatches (matched predicted spots, numerator)
 
-    Empty seeds (no matches) are dropped. One row per accepted seed.
+    When ``voxel_xyz`` is provided (scanning mode), cols 11-13 are written
+    as the voxel center to match IndexerScanningOMP.c's convention. PF
+    refinement (midas-fit-grain) consumes the voxel center as the
+    refinement starting point. Empty seeds (no matches) are dropped.
     """
     rows: list[list[float]] = []
     for s in result.seeds:
         if s.n_matches <= 0:
             continue
         om = s.best_or_mat.detach().cpu().numpy().reshape(9)
-        pos = s.best_pos.detach().cpu().numpy().reshape(3)
+        if voxel_xyz is None:
+            pos_xyz = s.best_pos.detach().cpu().numpy().reshape(3)
+            px, py, pz = float(pos_xyz[0]), float(pos_xyz[1]), float(pos_xyz[2])
+        else:
+            px, py, pz = voxel_xyz
         rows.append([
             float(s.spot_id),                          # 0
             float(s.avg_ia),                           # 1
             *[float(x) for x in om],                   # 2-10
-            float(pos[0]), float(pos[1]), float(pos[2]),  # 11-13
+            px, py, pz,                                 # 11-13
             float(s.n_t_spots),                        # 14: nExpected
             float(s.n_matches),                        # 15: nMatches
         ])

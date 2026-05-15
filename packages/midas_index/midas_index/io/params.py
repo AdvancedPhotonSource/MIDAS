@@ -49,6 +49,7 @@ _FLOAT_KEYS: dict[str, str] = {
 _INT_KEYS: dict[str, str] = {
     "SpaceGroup": "SpaceGroup",
     "UseFriedelPairs": "UseFriedelPairs",
+    "RingToIndex": "RingToIndex",
 }
 
 _STR_KEYS: dict[str, str] = {

@@ -104,6 +104,11 @@ class IndexerParams:
     scan_pos_tol_um: float = 0.0            # 0 ⇒ kernel disables filter (FF default)
     friedel_symmetric_scan_filter: bool = True   # production default; OFF for C-parity gate
     multi_solution_output: bool = False     # True → emit IndexBest_all.bin + friends
+    # Ring number used for seed selection in scanning mode (mirrors
+    # IndexerScanningOMP.c:1687-1693: the seed pool is all obs spots with
+    # ObsSpotsLab[5] == RingToIndex). FF mode ignores this and uses
+    # SpotsToIndex.csv directly.
+    RingToIndex: int = 0
 
     def get_ring_radius(self, ring_nr: int) -> float:
         """Sparse lookup mirroring `Params.RingRadii[ring_nr]` in C."""
