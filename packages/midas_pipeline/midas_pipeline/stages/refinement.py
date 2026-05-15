@@ -22,6 +22,8 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
+
 from .._logging import LOG
 from ..results import RefineResult, StageResult
 from ._base import StageContext
@@ -153,7 +155,14 @@ def run(ctx: StageContext) -> StageResult:
             f"refinement(PF): missing {extra_info_path}; transforms didn't run."
         )
     extra = read_extra_info(extra_info_path, mmap=True)
-    obs = ObservedSpots.from_extra_info(extra, device=device, dtype=dtype)
+    # PF refinement needs obs for ALL spots that might match any voxel's
+    # candidate orientations. Load every spot from ExtraInfo by passing
+    # its full SpotID column. (FF refinement could subset by
+    # SpotsToIndex.csv; PF can't because matched_ids vary per voxel.)
+    all_spot_ids = extra[:, 4].astype(np.int64)
+    obs = ObservedSpots.from_extra_info(
+        extra, spot_ids=all_spot_ids, device=device, dtype=dtype,
+    )
 
     hkls_path = layer_dir / "hkls.csv"
     if cfg.RhoD > 0.0 and cfg.Lsd > 0.0:
