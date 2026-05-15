@@ -74,6 +74,7 @@ class Indexer:
             read_spots_to_index_csv,
             write_spots_to_index_csv,
         )
+        from .io.binary import read_bins_scanning
 
         if cwd is None:
             cwd = os.path.dirname(self.params.OutputFolder.rstrip("/")) or "."
@@ -82,7 +83,16 @@ class Indexer:
         if spots is None:
             _, spots = read_spots(cwd)
         if bins is None:
-            bins = read_bins(cwd)
+            # PF / scanning fixtures emit Data.bin + nData.bin as int64 with
+            # (spot_id, scan_nr) pairs / (count, offset) pairs respectively
+            # (SaveBinDataScanning.c:672-700). FF fixtures use int32.
+            # Disambiguate via the Spots.bin column count: 10-col = PF.
+            spots_arr = np.asarray(spots)
+            n_cols = spots_arr.shape[1] if spots_arr.ndim == 2 else 0
+            if n_cols >= 10:
+                bins = read_bins_scanning(cwd)
+            else:
+                bins = read_bins(cwd)
         if hkls is None:
             hkls = read_hkls_csv("hkls.csv", ring_numbers=self.params.RingNumbers)
 

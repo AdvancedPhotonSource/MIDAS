@@ -92,3 +92,62 @@ def read_bins(cwd: str | Path) -> tuple[np.ndarray, np.ndarray]:
             f"nData.bin size {ndata.size * 4} bytes is not a multiple of 2 int32s"
         )
     return data, ndata
+
+
+def read_bins_scanning(cwd: str | Path) -> tuple[np.ndarray, np.ndarray]:
+    """Read scanning-mode Data.bin + nData.bin (int64) and project to FF layout.
+
+    ``SaveBinDataScanning.c:672-700`` writes both files as ``size_t``
+    (int64 on x86_64):
+
+      - ``nData.bin``: int64 pairs ``(count, offset_in_spot_units)`` per
+        bin, 16 bytes per bin.
+      - ``Data.bin``:  int64 pairs ``(spot_id, scan_nr)`` per spot,
+        16 bytes per spot.
+
+    The Python scan filter looks up the per-spot ``scan_nr`` via
+    ``obs[spot_id, 9]`` (the PF Spots.bin's ScanNr column), so we only
+    need ``spot_id`` from Data.bin for candidate gather. The result is
+    returned in the SAME int32 (data, ndata) layout as :func:`read_bins`
+    so the rest of the indexer pipeline is byte-identical:
+
+      - data_out = spot_ids only (every 2nd int64 from Data.bin) as int32.
+      - ndata_out = interleaved (count, offset) as int32, where offset is
+        already in "spot units" matching the FF Data.bin layout.
+
+    Returns
+    -------
+    (data, ndata) : tuple of np.ndarray (int32 in-RAM copies, not mmaps)
+
+    Notes
+    -----
+    Unlike :func:`read_bins`, this returns in-RAM int32 copies (not
+    mmaps) — the on-disk file is int64 and the dense candidate gather
+    indexes the array directly, so we must materialise to int32 once.
+    For the 5-grain × 15-scan fixture the copy is ~5 MB Data + ~520 MB
+    nData, well within chiltepin / build host RAM.
+    """
+    cwd = Path(cwd)
+    data_path = cwd / "Data.bin"
+    ndata_path = cwd / "nData.bin"
+    if not data_path.exists():
+        raise FileNotFoundError(f"Data.bin not found at {data_path}")
+    if not ndata_path.exists():
+        raise FileNotFoundError(f"nData.bin not found at {ndata_path}")
+    data64 = np.memmap(data_path, dtype=np.int64, mode="r")
+    ndata64 = np.memmap(ndata_path, dtype=np.int64, mode="r")
+    _assert_native(data64, "Data.bin (scanning)")
+    _assert_native(ndata64, "nData.bin (scanning)")
+    if data64.size % 2 != 0:
+        raise ValueError(
+            f"Data.bin (scanning) size {data64.size * 8} bytes is not a "
+            "multiple of 2 int64 (expected (spot_id, scan_nr) pairs)."
+        )
+    if ndata64.size % 2 != 0:
+        raise ValueError(
+            f"nData.bin (scanning) size {ndata64.size * 8} bytes is not a "
+            "multiple of 2 int64 (expected (count, offset) pairs)."
+        )
+    spot_ids = data64.reshape(-1, 2)[:, 0].astype(np.int32, copy=True)
+    ndata_i32 = ndata64.astype(np.int32, copy=True)
+    return spot_ids, ndata_i32
