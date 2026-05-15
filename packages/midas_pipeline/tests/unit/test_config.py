@@ -20,6 +20,7 @@ from midas_pipeline.config import (
     RefinementConfig,
     ScanGeometry,
     SeedingConfig,
+    read_scan_geometry_from_paramfile,
     sniff_scan_mode_from_paramfile,
 )
 
@@ -211,3 +212,47 @@ class TestSniffScanMode:
 
     def test_missing_file_defaults_ff(self, tmp_path):
         assert sniff_scan_mode_from_paramfile(tmp_path / "nope.txt") == "ff"
+
+
+# ---------------------------------------------------------------------------
+# read_scan_geometry_from_paramfile
+# ---------------------------------------------------------------------------
+
+
+class TestReadScanGeometry:
+    def test_missing_returns_none(self, tmp_path):
+        assert read_scan_geometry_from_paramfile(tmp_path / "nope.txt") is None
+
+    def test_no_scanning_keys_returns_none(self, tmp_path):
+        p = tmp_path / "P.txt"
+        p.write_text("RingThresh 1 100\n")
+        assert read_scan_geometry_from_paramfile(p) is None
+
+    def test_full_geometry(self, tmp_path):
+        p = tmp_path / "P.txt"
+        p.write_text(
+            "nScans 15\n"
+            "ScanStep 5.0\n"
+            "BeamSize 4.0\n"
+            "ScanPosTol 2.5\n"
+        )
+        out = read_scan_geometry_from_paramfile(p)
+        assert out == {
+            "n_scans": 15,
+            "scan_step_um": 5.0,
+            "beam_size_um": 4.0,
+            "scan_pos_tol_um": 2.5,
+        }
+
+    def test_px_alias(self, tmp_path):
+        """'px' key (transforms-stage convention) → scan_step_um."""
+        p = tmp_path / "P.txt"
+        p.write_text("nScans 15\npx 2.0;\n")
+        out = read_scan_geometry_from_paramfile(p)
+        assert out == {"n_scans": 15, "scan_step_um": 2.0}
+
+    def test_partial_returns_what_it_finds(self, tmp_path):
+        p = tmp_path / "P.txt"
+        p.write_text("nScans 7\n")
+        out = read_scan_geometry_from_paramfile(p)
+        assert out == {"n_scans": 7}

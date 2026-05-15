@@ -47,6 +47,64 @@ def test_run_pf_requires_n_scans(tmp_path):
         build_config(args)
 
 
+def test_run_pf_reads_geometry_from_paramfile(tmp_path):
+    """When --n-scans / --scan-step are omitted, fall back to paramstest."""
+    params = tmp_path / "P.txt"
+    params.write_text(
+        "nScans 15\n"
+        "ScanStep 5.0\n"
+        "BeamSize 5.0\n"
+        "ScanPosTol 2.5\n"
+    )
+    parser = _build_parser()
+    args = parser.parse_args([
+        "run", "--scan-mode", "pf",
+        "--params", str(params), "--result", str(tmp_path / "out"),
+    ])
+    cfg = build_config(args)
+    assert cfg.is_pf
+    assert cfg.scan.n_scans == 15
+    # scan_positions reflects scan_step×n_scans, centered on 0.
+    import numpy as np
+    assert cfg.scan.scan_positions.shape == (15,)
+    assert np.isclose(cfg.scan.scan_positions[1] - cfg.scan.scan_positions[0], 5.0)
+    assert cfg.scan.beam_size_um == 5.0
+    assert cfg.scan.scan_pos_tol_um == 2.5
+
+
+def test_run_pf_cli_overrides_paramfile(tmp_path):
+    """CLI flags must override values sniffed from the paramfile."""
+    params = tmp_path / "P.txt"
+    params.write_text("nScans 15\nScanStep 5.0\nBeamSize 5.0\n")
+    parser = _build_parser()
+    args = parser.parse_args([
+        "run", "--scan-mode", "pf",
+        "--params", str(params), "--result", str(tmp_path / "out"),
+        "--n-scans", "31",       # override sniffed 15
+        "--scan-step", "2.0",    # override sniffed 5.0
+    ])
+    cfg = build_config(args)
+    assert cfg.scan.n_scans == 31
+    import numpy as np
+    assert np.isclose(cfg.scan.scan_positions[1] - cfg.scan.scan_positions[0], 2.0)
+
+
+def test_run_pf_clear_error_when_both_missing(tmp_path):
+    """Empty paramstest + no CLI flags → error mentions both sources."""
+    params = tmp_path / "P.txt"
+    params.write_text("")
+    parser = _build_parser()
+    args = parser.parse_args([
+        "run", "--scan-mode", "pf",
+        "--params", str(params), "--result", str(tmp_path / "out"),
+    ])
+    with pytest.raises(SystemExit) as excinfo:
+        build_config(args)
+    msg = str(excinfo.value)
+    assert "n-scans" in msg
+    assert "scan-step" in msg
+
+
 def test_run_pf_full(tmp_path):
     params = tmp_path / "P.txt"
     params.write_text("")

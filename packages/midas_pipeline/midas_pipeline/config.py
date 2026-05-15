@@ -441,3 +441,45 @@ def sniff_scan_mode_from_paramfile(path: str | Path) -> ScanMode:
     if has_scanning_key and n_scans > 1:
         return "pf"
     return "ff"
+
+
+def read_scan_geometry_from_paramfile(path: str | Path) -> Optional[dict]:
+    """Extract scan-geometry knobs from a paramstest.txt for ScanGeometry.pf_uniform.
+
+    Returns a dict with the keys ScanGeometry.pf_uniform takes, or None
+    when the file is missing or contains no scanning keys. Used by the
+    CLI to default ``--n-scans`` / ``--scan-step`` / ``--beam-size`` from
+    the params file so the user doesn't have to repeat them on the command
+    line. CLI flags override anything sniffed here.
+
+    Keys recognised (matches the C / pf_MIDAS.py convention):
+      nScans     → n_scans
+      px / ScanStep → scan_step_um
+      BeamSize   → beam_size_um
+      ScanPosTol → scan_pos_tol_um (0 ⇒ kernel defaults to BeamSize/2)
+    """
+    p = Path(path)
+    if not p.exists():
+        return None
+    found = False
+    out: dict = {}
+    for raw in p.read_text().splitlines():
+        parts = raw.split()
+        if not parts:
+            continue
+        key = parts[0]
+        if len(parts) < 2:
+            continue
+        token = parts[1].rstrip(";")
+        try:
+            if key == "nScans":
+                out["n_scans"] = int(token); found = True
+            elif key in {"px", "ScanStep"}:
+                out["scan_step_um"] = float(token); found = True
+            elif key == "BeamSize":
+                out["beam_size_um"] = float(token); found = True
+            elif key == "ScanPosTol":
+                out["scan_pos_tol_um"] = float(token); found = True
+        except ValueError:
+            continue
+    return out if found else None

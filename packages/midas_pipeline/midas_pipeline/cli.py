@@ -52,6 +52,7 @@ from .config import (
     SeedingMode,
     SinoSource,
     SinoType,
+    read_scan_geometry_from_paramfile,
     sniff_scan_mode_from_paramfile,
 )
 from .pipeline import Pipeline, all_stage_names
@@ -293,16 +294,36 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
     if scan_mode == "ff":
         scan = ScanGeometry.ff(beam_size_um=args.beam_size or 0.0)
     else:
-        if args.n_scans is None or args.scan_step is None:
+        # Fall back to the params file for nScans / ScanStep / BeamSize
+        # when the CLI didn't provide them. CLI flags always override.
+        sniffed = read_scan_geometry_from_paramfile(args.params) or {}
+        n_scans = args.n_scans if args.n_scans is not None else sniffed.get("n_scans")
+        scan_step = (args.scan_step if args.scan_step is not None
+                     else sniffed.get("scan_step_um"))
+        beam_size = args.beam_size if args.beam_size else sniffed.get("beam_size_um", 0.0)
+        scan_pos_tol = (args.scan_pos_tol if args.scan_pos_tol
+                        else sniffed.get("scan_pos_tol_um", 0.0))
+        missing = []
+        if n_scans is None:
+            missing.append("--n-scans (or nScans in paramstest)")
+        if scan_step is None:
+            missing.append("--scan-step (or ScanStep/px in paramstest)")
+        if missing:
             raise SystemExit(
-                "scan_mode=pf requires --n-scans and --scan-step "
-                "(or use --scan-mode auto with nScans in the params file)"
+                f"scan_mode=pf needs {', '.join(missing)}. "
+                "Either pass on the CLI or include in the params file."
             )
+        if args.n_scans is None and "n_scans" in sniffed:
+            LOG.info("scan-mode=pf: using nScans=%d from %s",
+                     sniffed["n_scans"], args.params)
+        if args.scan_step is None and "scan_step_um" in sniffed:
+            LOG.info("scan-mode=pf: using scan_step=%s µm from %s",
+                     sniffed["scan_step_um"], args.params)
         scan = ScanGeometry.pf_uniform(
-            n_scans=args.n_scans,
-            scan_step_um=args.scan_step,
-            beam_size_um=args.beam_size,
-            scan_pos_tol_um=args.scan_pos_tol,
+            n_scans=int(n_scans),
+            scan_step_um=float(scan_step),
+            beam_size_um=float(beam_size),
+            scan_pos_tol_um=float(scan_pos_tol),
             friedel_symmetric_scan_filter=args.friedel,
         )
 
