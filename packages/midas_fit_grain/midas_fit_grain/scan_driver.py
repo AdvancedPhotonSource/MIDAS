@@ -226,12 +226,17 @@ def refine_scanning_block(
         )
 
     # Same Cartesian-product layout as Indexer.run_scanning + the C
-    # IndexerScanningOMP at lines 1667-1683.
+    # IndexerScanningOMP at lines 1676-1684 + 1731-1732:
+    #     grid[(i*nScans + j), 0] = ypos_sorted[i]    → xThis
+    #     grid[(i*nScans + j), 1] = ypos_sorted[j]    → yThis
+    # For voxel v = i*nScans + j: voxel_xy[v] = (ypos[i], ypos[j]).
+    # MUST match the indexer's ordering (92be62ba) so refinement seeds
+    # land on the correct voxel center.
     idx = np.arange(n_vox)
-    i_idx = idx // n_scans                # row (y)
-    j_idx = idx % n_scans                 # col (x)
+    i_idx = idx // n_scans
+    j_idx = idx % n_scans
     voxel_xy_table = np.stack(
-        [scan_positions[j_idx], scan_positions[i_idx]], axis=-1,
+        [scan_positions[i_idx], scan_positions[j_idx]], axis=-1,
     )
 
     # Voxel sharding.
