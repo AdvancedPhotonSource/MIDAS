@@ -46,6 +46,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-cov", "matplotlib", "ipykernel"]
 notebook = ["matplotlib", "ipykernel", "jupyter"]
+# Optional CPU accelerators (Numba JIT). Both merge_scans (per-scan merge
+# inner loop) and potts (ICM sweep) detect numba at import time and fall
+# back to pure-Python implementations when it's absent. Install for
+# production runs on CPU; the JIT speedup is ~20-50× on those loops.
+fast = ["numba>=0.56"]
 
 [project.scripts]
 midas-pipeline = "midas_pipeline.cli:main"
