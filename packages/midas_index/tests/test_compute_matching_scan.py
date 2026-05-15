@@ -178,11 +178,14 @@ def test_scan_filter_disabled_keeps_both_candidates():
 
 
 def test_friedel_symmetric_keeps_mirror_candidate():
-    """Voxel at (5, 0) µm, omega=0 ⇒ s_proj = 5 µm.
+    """Voxel at (0, 5) µm, omega=0 ⇒ s_proj = x·sin(0)+y·cos(0) = 5 µm.
 
     Friedel pair appears at ypos = −5 µm (scan_nr=0). With Friedel OFF the
     filter drops it (|5 − (−5)| = 10 > tol=2). With Friedel ON it's kept
     via |−5 − (−5)| = 0 < tol.
+
+    Convention (sin/cos order) matches IndexerScanningOMP.c:440 +
+    spots[][14]=sinOmes, [15]=cosOmes: yRot = x·sin(ω) + y·cos(ω).
     """
     omega = 0.0
     obs10 = torch.tensor([
@@ -196,7 +199,7 @@ def test_friedel_symmetric_keeps_mirror_candidate():
                                     kw["ome_bin_size"], kw["n_eta_bins"],
                                     kw["n_ome_bins"], n_rows=1)
     scan_positions = torch.tensor([-5.0], dtype=torch.float64)
-    voxel_xy = torch.tensor([[5.0, 0.0]], dtype=torch.float64)
+    voxel_xy = torch.tensor([[0.0, 5.0]], dtype=torch.float64)
 
     common = dict(
         theor=theor, valid=valid, obs=obs10,

@@ -265,6 +265,43 @@ class Indexer:
         if n_spots_to_index is not None:
             spot_ids = spot_ids[:n_spots_to_index]
 
+        # 5b. Per-seed scan-aware pre-filter (mirrors IndexerScanningOMP.c:1786-1793).
+        # Builds (omega_rad, scan_y_obs) for every seed once, before the voxel
+        # loop. Per voxel we then compute s_proj = x*sin(omega) + y*cos(omega)
+        # vectorised over seeds, keep seeds with |s_proj - scan_y_obs| <= tol.
+        # Without this pre-filter, every voxel re-runs ALL seeds through the
+        # full orientation grid + compare_spots, even those that the C
+        # reference would have rejected in O(1) at the outer loop — dominant
+        # perf hotspot in the per-voxel solve.
+        obs_np = np.asarray(obs["spots"])
+        if obs_np.shape[1] < 10:
+            raise ValueError(
+                "scanning indexer needs 10-col Spots.bin (PF layout); got "
+                f"{obs_np.shape[1]} cols. Check Spots.bin emitter."
+            )
+        obs_id_to_row = {int(v): i for i, v in enumerate(obs_np[:, 4].astype(np.int64))}
+        seed_ids_np = spot_ids.cpu().numpy().astype(np.int64)
+        seed_obs_rows = np.array(
+            [obs_id_to_row.get(int(sid), -1) for sid in seed_ids_np], dtype=np.int64,
+        )
+        seed_has_obs = seed_obs_rows >= 0
+        # Use row 0 as a safe placeholder for unmatched seeds; mask anyway.
+        seed_obs_rows_safe = np.where(seed_has_obs, seed_obs_rows, 0)
+        seed_omega_deg = obs_np[seed_obs_rows_safe, 2]
+        seed_scan_nr = obs_np[seed_obs_rows_safe, 9].astype(np.int64)
+        seed_omega_rad_np = np.deg2rad(seed_omega_deg)
+        seed_sin_ome = np.sin(seed_omega_rad_np)
+        seed_cos_ome = np.cos(seed_omega_rad_np)
+        # ypos[seed_scan_nr] — np ndarray (n_seeds,)
+        scan_positions_np = scan_positions_t.cpu().numpy().astype(np.float64)
+        n_scans_pos = scan_positions_np.size
+        seed_scan_nr_clamped = np.clip(seed_scan_nr, 0, n_scans_pos - 1)
+        seed_scan_y_obs = scan_positions_np[seed_scan_nr_clamped]
+        scan_pos_tol = float(ctx.scan_pos_tol_um)
+        friedel_sym = bool(ctx.friedel_symmetric_scan_filter)
+        pre_filter_enabled = scan_pos_tol > 0
+        voxel_xy_np = voxel_xy_table.cpu().numpy().astype(np.float64)
+
         # 6. Per-voxel loop. Collect each voxel's seed results into a
         # (n_solutions, 16) float64 record block matching the C
         # IndexerScanningOMP consolidated layout.
@@ -273,8 +310,23 @@ class Indexer:
         ]
         for v in range(v_start, v_end):
             ctx.current_voxel_xy = voxel_xy_table[v]
+            voxel_seeds = spot_ids
+            if pre_filter_enabled:
+                vx, vy = voxel_xy_np[v]
+                s_proj = vx * seed_sin_ome + vy * seed_cos_ome
+                diff = np.abs(s_proj - seed_scan_y_obs)
+                ok = diff <= scan_pos_tol
+                if friedel_sym:
+                    diff_friedel = np.abs(s_proj + seed_scan_y_obs)
+                    ok = ok | (diff_friedel <= scan_pos_tol)
+                ok = ok & seed_has_obs
+                if not ok.any():
+                    continue  # voxel has no seeds; record block stays empty
+                voxel_seeds = torch.as_tensor(
+                    seed_ids_np[ok], dtype=torch.int64,
+                )
             voxel_result = run_block(
-                ctx, spot_ids,
+                ctx, voxel_seeds,
                 block_nr=0, n_blocks=1,
                 seed_group_size=seed_group_size,
             )

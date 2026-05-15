@@ -78,7 +78,11 @@ pytestmark = [
 # ---------------------------------------------------------------------------
 
 
-VOXEL_SHARDS = 25       # 225 voxels / 25 = 9 voxels per smoke shard
+VOXEL_SHARDS = 225      # 225 voxels / 225 = 1 voxel per smoke shard
+# 1-voxel shards keep the test bounded at ~2-3 min on chiltepin per the
+# current compare_spots cost (single voxel ≈ 130s). The 25-shard form (9
+# voxels) is closer to a real perf benchmark; expand it back when the
+# per-voxel (N, T, M) tensor allocation in the scan filter is reduced.
 
 
 def _run_python_indexer(out_path: Path, *, voxel_block_nr: int = 0) -> None:

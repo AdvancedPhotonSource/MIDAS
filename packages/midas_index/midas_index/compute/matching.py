@@ -255,8 +255,10 @@ def compare_spots(
         v_x = voxel_xy[..., 0].view(N, 1).to(dtype=dtype, device=device)
         v_y = voxel_xy[..., 1].view(N, 1).to(dtype=dtype, device=device)
         # Project voxel onto rotated scan axis per-theor-spot using omega (deg → rad).
+        # Convention matches IndexerScanningOMP.c:440 + spots[][14/15] = sin/cos:
+        #     yRot = xThis * sin(omega) + yThis * cos(omega)
         omega_rad = omega * DEG2RAD                                            # (N, T)
-        s_proj = v_x * torch.cos(omega_rad) + v_y * torch.sin(omega_rad)        # (N, T)
+        s_proj = v_x * torch.sin(omega_rad) + v_y * torch.cos(omega_rad)        # (N, T)
 
         # Per-candidate scan position (col 9 of obs is scanNr, indexes scan_positions).
         obs_scan_idx = obs[..., 9].to(torch.int64)                              # (n_obs,)
