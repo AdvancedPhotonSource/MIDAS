@@ -421,8 +421,11 @@ def _spot_to_gv_pos(
     vector via `spot_to_gv` (line 726).
     """
     # RotateAroundZ(c, omega): vr = (cos*cx - sin*cy, sin*cx + cos*cy, cz)
-    co = torch.cos(omega_deg * DEG2RAD)
-    so = torch.sin(omega_deg * DEG2RAD)
+    # The function then rotates by -omega for the final transform; by parity
+    # cos(-x)=cos(x), sin(-x)=-sin(x) — reuse (co, so) instead of recomputing.
+    omega_rad = omega_deg * DEG2RAD
+    co = torch.cos(omega_rad)
+    so = torch.sin(omega_rad)
     vr_x = co * cx - so * cy
     vr_y = so * cx + co * cy
     vr_z = cz
@@ -435,10 +438,9 @@ def _spot_to_gv_pos(
     zn = zi / L
     g1r = -1.0 + xn
     g2r = yn
-    cos_neg = torch.cos(-omega_deg * DEG2RAD)
-    sin_neg = torch.sin(-omega_deg * DEG2RAD)
-    g1 = g1r * cos_neg - g2r * sin_neg
-    g2 = g1r * sin_neg + g2r * cos_neg
+    # Rotate by -omega: cos(-ω)=co, sin(-ω)=-so.
+    g1 = g1r * co + g2r * so       # was: g1r*cos_neg - g2r*sin_neg
+    g2 = -g1r * so + g2r * co      # was: g1r*sin_neg + g2r*cos_neg
     g3 = zn
     return torch.stack([g1, g2, g3], dim=-1)
 
