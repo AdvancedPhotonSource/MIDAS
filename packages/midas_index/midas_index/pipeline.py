@@ -754,12 +754,28 @@ def _setup_group_cpu(
             seed_meta.append({"sid": sid, "valid": False})
             continue
 
-        positions_seed, candidate_idx = position_grid.build_position_grid(
-            seed_y0=y0_all, seed_z0=z0_all,
-            ys=ys, zs=zs, omega_deg=seed_omega,
-            distance=p.Distance, r_sample=p.Rsample, step_size=p.StepsizePos,
-            h_beam=p.Hbeam,
-        )
+        # Scanning mode (PF): the voxel center is the FIXED grain position
+        # (mirrors IndexerScanningOMP.c:1156: ``ga=xThis, gb=yThis, gc=zThis``).
+        # NO position grid — the voxel grid IS the position grid. Skipping
+        # build_position_grid here is the dominant perf win for PF: the
+        # legacy FF call expands N by ~Rsample/StepsizePos (50-100×) per
+        # seed, which crushes downstream compare_spots / simulate.
+        if ctx.scan_positions is not None and ctx.current_voxel_xy is not None:
+            n_seed_yz = int(y0_all.numel())
+            voxel_x = float(ctx.current_voxel_xy[0].item())
+            voxel_y = float(ctx.current_voxel_xy[1].item())
+            positions_seed = torch.tensor(
+                [[voxel_x, voxel_y, 0.0]] * n_seed_yz,
+                device=cpu, dtype=ctx.dtype,
+            )
+            candidate_idx = torch.arange(n_seed_yz, device=cpu, dtype=torch.int64)
+        else:
+            positions_seed, candidate_idx = position_grid.build_position_grid(
+                seed_y0=y0_all, seed_z0=z0_all,
+                ys=ys, zs=zs, omega_deg=seed_omega,
+                distance=p.Distance, r_sample=p.Rsample, step_size=p.StepsizePos,
+                h_beam=p.Hbeam,
+            )
         if positions_seed.shape[0] == 0:
             seed_meta.append({"sid": sid, "valid": False})
             continue
@@ -772,7 +788,8 @@ def _setup_group_cpu(
 
         # Per-(y0,z0) position counts — used by the C-compat post-filter to
         # replay IndexerOMP's adaptive `nDelta` skip walk. See
-        # `_c_compat_visited_mask` for the algorithm.
+        # `_c_compat_visited_mask` for the algorithm. (In PF mode this is
+        # all-ones since each seed_yz contributes exactly one position.)
         n_pos_per_y0z0 = torch.bincount(candidate_idx, minlength=y0_all.numel()).tolist()
 
         R_chunks_cpu.append(local_R_cat)

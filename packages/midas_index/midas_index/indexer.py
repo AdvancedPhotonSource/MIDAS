@@ -238,15 +238,21 @@ class Indexer:
         )
         ctx.scan_positions = scan_positions_t
 
-        # 3. Build voxel grid: nVox = nScans * nScans, voxel_xy[v] =
-        # (scan_positions[v % nScans], scan_positions[v // nScans]).
-        # Matches IndexerScanningOMP.c:1667-1683.
-        # i-axis = "row" (y); j-axis = "col" (x). v = i * nScans + j.
+        # 3. Build voxel grid: nVox = nScans * nScans, with the per-voxel
+        # (x, y) sample-frame coordinates matching
+        # IndexerScanningOMP.c:1676-1684 + :1731-1732:
+        #     grid[(i*nScans + j) * 2 + 0] = ypos_sorted[i]   → xThis
+        #     grid[(i*nScans + j) * 2 + 1] = ypos_sorted[j]   → yThis
+        # For voxel v = i*nScans + j: voxel_xy[v] = (ypos[i], ypos[j]).
+        # The C code's ga/gb (sample-frame x/y the forward sim sees) are
+        # (xThis, yThis), and the scan filter uses
+        #     yRot = xThis*sin(ω) + yThis*cos(ω)
+        # so this ordering pins both the position and the filter.
         idx = torch.arange(n_scans * n_scans, device=self.device)
         i_idx = idx // n_scans
         j_idx = idx % n_scans
         voxel_xy_table = torch.stack(
-            [scan_positions_t[j_idx], scan_positions_t[i_idx]], dim=-1,
+            [scan_positions_t[i_idx], scan_positions_t[j_idx]], dim=-1,
         )                                     # (nVox, 2)
         n_vox = int(voxel_xy_table.shape[0])
 
