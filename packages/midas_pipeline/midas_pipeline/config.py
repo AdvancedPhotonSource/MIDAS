@@ -454,7 +454,8 @@ def read_scan_geometry_from_paramfile(path: str | Path) -> Optional[dict]:
 
     Keys recognised (matches the C / pf_MIDAS.py convention):
       nScans     → n_scans
-      px / ScanStep → scan_step_um
+      ScanStep   → scan_step_um (do NOT confuse with ``px`` — that's the
+                   detector pixel pitch, a completely different number)
       BeamSize   → beam_size_um
       ScanPosTol → scan_pos_tol_um (0 ⇒ kernel defaults to BeamSize/2)
     """
@@ -474,7 +475,7 @@ def read_scan_geometry_from_paramfile(path: str | Path) -> Optional[dict]:
         try:
             if key == "nScans":
                 out["n_scans"] = int(token); found = True
-            elif key in {"px", "ScanStep"}:
+            elif key == "ScanStep":
                 out["scan_step_um"] = float(token); found = True
             elif key == "BeamSize":
                 out["beam_size_um"] = float(token); found = True

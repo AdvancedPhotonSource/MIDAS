@@ -244,12 +244,17 @@ class TestReadScanGeometry:
             "scan_pos_tol_um": 2.5,
         }
 
-    def test_px_alias(self, tmp_path):
-        """'px' key (transforms-stage convention) → scan_step_um."""
+    def test_px_is_not_scan_step(self, tmp_path):
+        """``px`` is detector pixel pitch; it must NOT be sniffed as
+        scan_step. Only ``ScanStep`` keys the scan step."""
         p = tmp_path / "P.txt"
-        p.write_text("nScans 15\npx 2.0;\n")
+        p.write_text("nScans 15\npx 200.0;\n")
         out = read_scan_geometry_from_paramfile(p)
-        assert out == {"n_scans": 15, "scan_step_um": 2.0}
+        assert out == {"n_scans": 15}
+        # And when ScanStep is present alongside px, only ScanStep wins.
+        p.write_text("nScans 15\npx 200.0;\nScanStep 5.0;\n")
+        out = read_scan_geometry_from_paramfile(p)
+        assert out == {"n_scans": 15, "scan_step_um": 5.0}
 
     def test_partial_returns_what_it_finds(self, tmp_path):
         p = tmp_path / "P.txt"
