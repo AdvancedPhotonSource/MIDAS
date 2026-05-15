@@ -112,6 +112,7 @@ def compare_spots(
     voxel_xy: torch.Tensor | None = None,         # (N, 2) per-tuple (x, y) in µm
     scan_pos_tol_um: float = 0.0,                 # 0 ⇒ filter disabled (FF default)
     friedel_symmetric_scan_filter: bool = True,   # production default; OFF for C parity
+    obs_scan_nr_int64: torch.Tensor | None = None,  # cached obs[..., 9].long() from IndexerContext
 ) -> MatchResult:
     """Vectorized binned matching. See module docstring for tie-break semantics.
 
@@ -144,6 +145,7 @@ def compare_spots(
             voxel_xy=voxel_xy,
             scan_pos_tol_um=scan_pos_tol_um,
             friedel_symmetric_scan_filter=friedel_symmetric_scan_filter,
+            obs_scan_nr_int64=obs_scan_nr_int64,
         )
     device = theor.device
     dtype = theor.dtype
@@ -260,8 +262,14 @@ def compare_spots(
         omega_rad = omega * DEG2RAD                                            # (N, T)
         s_proj = v_x * torch.sin(omega_rad) + v_y * torch.cos(omega_rad)        # (N, T)
 
-        # Per-candidate scan position (col 9 of obs is scanNr, indexes scan_positions).
-        obs_scan_idx = obs[..., 9].to(torch.int64)                              # (n_obs,)
+        # Per-candidate scan position (col 9 of obs is scanNr, indexes
+        # scan_positions). Prefer the IndexerContext-cached int64 tensor
+        # when available — avoids re-casting on every compare_spots call
+        # (the dominant per-voxel hot path in scan mode).
+        if obs_scan_nr_int64 is not None:
+            obs_scan_idx = obs_scan_nr_int64
+        else:
+            obs_scan_idx = obs[..., 9].to(torch.int64)                          # (n_obs,)
         scan_pos_arr = scan_positions.to(dtype=dtype, device=device)
         cand_scan_idx = obs_scan_idx[spot_rows]                                 # (N, T, M)
         cand_scan_pos = scan_pos_arr[cand_scan_idx.clamp(0, scan_pos_arr.numel() - 1)]
@@ -359,6 +367,7 @@ def _compare_spots_jagged(
     voxel_xy: torch.Tensor | None = None,
     scan_pos_tol_um: float = 0.0,
     friedel_symmetric_scan_filter: bool = True,
+    obs_scan_nr_int64: torch.Tensor | None = None,
 ) -> MatchResult:
     """Memory-bounded variant of `compare_spots`: chunks N axis into
     `chunk_size` slabs and concatenates per-slab MatchResults.
@@ -390,6 +399,7 @@ def _compare_spots_jagged(
                 voxel_xy=chunk_voxel_xy,
                 scan_pos_tol_um=scan_pos_tol_um,
                 friedel_symmetric_scan_filter=friedel_symmetric_scan_filter,
+                obs_scan_nr_int64=obs_scan_nr_int64,
             )
         )
     return MatchResult(

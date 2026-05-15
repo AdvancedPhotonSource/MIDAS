@@ -128,6 +128,17 @@ class IndexerContext:
         # `.cpu()`) would force a sync on the in-flight GPU stream.
         self.obs_cpu = self.obs.detach().cpu().numpy()
 
+        # Pre-cast obs columns 4 (spot_id) and 9 (scan_nr when PF) to int64
+        # once. ``compare_spots`` reaches for these on every call, and the
+        # naive ``obs[..., 4].to(torch.int64)`` allocates a new n_obs tensor
+        # each time. Cached on the context so the scan-aware path (in
+        # particular) doesn't pay this per-voxel.
+        self.obs_id_int64 = self.obs[..., 4].to(torch.int64).contiguous()
+        if self.obs.shape[-1] >= 10:
+            self.obs_scan_nr_int64 = self.obs[..., 9].to(torch.int64).contiguous()
+        else:
+            self.obs_scan_nr_int64 = None
+
         # Global max bin occupancy from nData.bin (interleaved as [count, off]).
         # Precomputed once so `compare_spots` doesn't need a per-call
         # `n_per.max().item()` sync — the dense candidate gather is sized to
@@ -173,6 +184,9 @@ class IndexerContext:
             "voxel_xy": self.current_voxel_xy.view(1, 2).expand(n_tuples, 2),
             "scan_pos_tol_um": self.scan_pos_tol_um,
             "friedel_symmetric_scan_filter": self.friedel_symmetric_scan_filter,
+            # Pre-cached int64 ScanNr column so compare_spots' per-call
+            # ``obs[..., 9].to(int64)`` cast becomes a noop.
+            "obs_scan_nr_int64": self.obs_scan_nr_int64,
         }
 
     def find_obs_row_by_id(self, spot_id: int) -> int:
