@@ -104,11 +104,20 @@ _IMAGES_COL_INDEX: tuple[int, ...] = (
 def _voxel_index_from_filename(file_path: str) -> int:
     """Extract the voxel index from a per-voxel result filename.
 
-    Mirrors the legacy parsing ``fileN.split('.')[-2].split('_')[-2]``
-    at pf_MIDAS.py:2443. For a file
-    ``…/Results/FitBest_000123_000000001.csv`` this returns ``123``.
+    Handles both refiner outputs:
+      - C ``FitBest_VVVVV_SSSSSS.csv``                 → voxNr = parts[-2]
+      - Python ``Result_OrientPos_voxel_N.csv``         → voxNr = parts[-1]
+
+    Mirrors the legacy parsing convention at pf_MIDAS.py:2443 for the
+    C-named case, plus a fallback for the new midas-fit-grain naming.
     """
-    return int(file_path.split(".")[-2].split("_")[-2])
+    stem = file_path.split(".")[-2]
+    parts = stem.split("_")
+    # Python form: ..._voxel_N
+    if len(parts) >= 2 and parts[-2] == "voxel":
+        return int(parts[-1])
+    # C form: ..._VVVVV_SSSSSS
+    return int(parts[-2])
 
 
 # ---------------------------------------------------------------------------
