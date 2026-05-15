@@ -62,6 +62,12 @@ _STAGES: List[StageEntry] = [
     # PF-only: per-scan merge before binning
     ("merge_scans",        stages.merge_scans.run,        _PF_ONLY),
 
+    # PF-only seeding (unseeded | ff | merged-ff). Runs AFTER merge_scans
+    # so merged-FF seeding can consume the per-scan spot lists, and
+    # BEFORE binning so the indexer's seeded path can read the resulting
+    # UniqueOrientations.csv.
+    ("seeding",            stages.seeding.run,            _PF_ONLY),
+
     # Shared: binning → indexing → refinement
     ("binning",            stages.binning.run,            _BOTH),
     ("indexing",           stages.indexing.run,           _BOTH),

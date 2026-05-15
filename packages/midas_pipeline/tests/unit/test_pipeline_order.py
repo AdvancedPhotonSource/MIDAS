@@ -22,7 +22,7 @@ _EXPECTED_FF = [
 _EXPECTED_PF = [
     "zip_convert", "hkl", "peakfit", "merge_overlaps", "calc_radius",
     "transforms", "cross_det_merge", "global_powder",
-    "merge_scans",
+    "merge_scans", "seeding",
     "binning", "indexing", "refinement",
     "find_grains", "sinogen", "reconstruct",
     "fuse", "potts", "em_refine",
@@ -43,7 +43,7 @@ def test_pf_stage_order():
 def test_ff_excludes_pf_only_stages():
     """No PF-only stage should appear in FF mode."""
     ff_names = {n for n, _ in stage_order_for("ff")}
-    pf_only = {"merge_scans", "find_grains", "sinogen", "reconstruct",
+    pf_only = {"merge_scans", "seeding", "find_grains", "sinogen", "reconstruct",
                "fuse", "potts", "em_refine"}
     assert ff_names.isdisjoint(pf_only)
 
