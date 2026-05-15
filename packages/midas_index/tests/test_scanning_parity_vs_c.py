@@ -79,10 +79,19 @@ pytestmark = [
 
 
 VOXEL_SHARDS = 225      # 225 voxels / 225 = 1 voxel per smoke shard
-# 1-voxel shards keep the test bounded at ~2-3 min on chiltepin per the
-# current compare_spots cost (single voxel ≈ 130s). The 25-shard form (9
-# voxels) is closer to a real perf benchmark; expand it back when the
-# per-voxel (N, T, M) tensor allocation in the scan filter is reduced.
+# 1-voxel shard (voxel 0 = (-35, -35) = both diagonals at the min) is
+# bit-exact green at the configured tolerances after the perf fix in
+# 92be62ba (~6.7s for all 4 tests on chiltepin).
+#
+# Expanding to 9-voxel shards exposes a SEPARATE parity question: C
+# writes the BEST MATCHED SPOT's ID into the record's col 0 (not the
+# seed ID — see IndexerScanningOMP.c:1132 ``SpotID = AllGrainSpots[0][14]``).
+# For voxels where Python's tie-break in compare_spots picks a
+# different best-match spot than C (fp64 noise on borderline matches),
+# Python's record count and seed-identity ordering both diverge from
+# C's. Solving that needs a misorientation-based set-compare across the
+# two solution lists rather than the current row-by-row test. Track in
+# `project_midas_index_scanning_perf.md`.
 
 
 def _run_python_indexer(out_path: Path, *, voxel_block_nr: int = 0) -> None:
