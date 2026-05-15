@@ -120,15 +120,20 @@ def test_seeds_to_record_block_layout():
         avg_ia=0.0012,
         matched_ids=torch.tensor([1, 2, 3], dtype=torch.int64),
     )
-    block = _seeds_to_record_block(IndexerResult(0, 1, [seed]))
-    assert block.shape == (1, 16)
-    row = block[0]
+    vals, keys, ids = _seeds_to_record_block(IndexerResult(0, 1, [seed]))
+    assert vals.shape == (1, 16)
+    row = vals[0]
     assert row[0] == 42.0                                   # spot_id
     assert abs(row[1] - 0.0012) < 1e-12                     # avg_ia
     np.testing.assert_array_equal(row[2:11], [1, 0, 0, 0, 1, 0, 0, 0, 1])
     np.testing.assert_array_equal(row[11:14], [1.5, 2.5, 3.5])
     assert row[14] == 24.0                                  # nExpected
     assert row[15] == 20.0                                  # nMatches
+    # Keys: [SpotID, nMatches, nIDs, reserved]
+    assert keys.shape == (1, 4)
+    np.testing.assert_array_equal(keys[0], [42, 20, 3, 0])
+    # IDs: concatenated matched_ids
+    np.testing.assert_array_equal(ids, [1, 2, 3])
 
 
 def test_seeds_to_record_block_drops_unmatched():
@@ -144,8 +149,10 @@ def test_seeds_to_record_block_drops_unmatched():
         avg_ia=0.0,
         matched_ids=torch.zeros(0, dtype=torch.int64),
     )
-    block = _seeds_to_record_block(IndexerResult(0, 1, [bad_seed]))
-    assert block.shape == (0, 16)
+    vals, keys, ids = _seeds_to_record_block(IndexerResult(0, 1, [bad_seed]))
+    assert vals.shape == (0, 16)
+    assert keys.shape == (0, 4)
+    assert ids.shape == (0,)
 
 
 # ---------------------------------------------------------------------------

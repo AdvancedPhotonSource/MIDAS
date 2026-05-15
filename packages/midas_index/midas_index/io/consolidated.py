@@ -114,6 +114,106 @@ def write_index_best_all(
 
 
 # ---------------------------------------------------------------------------
+# Sibling writers: IndexKey_all.bin + IndexBest_IDs_all.bin
+# ---------------------------------------------------------------------------
+# All three files share the standard header [int32 n_voxels, int32[n_voxels]
+# n_sol_arr, int64[n_voxels] off_arr]. They differ in payload:
+#
+#   IndexBest_all.bin (write_index_best_all):
+#     per-voxel records of shape (n_sol, 16) float64
+#
+#   IndexKey_all.bin (write_index_key_all):
+#     per-voxel records of shape (n_sol, 4) uint64 — per-solution keys
+#     [SpotID, nMatches, nIDs, reserved].
+#
+#   IndexBest_IDs_all.bin (write_index_best_ids_all):
+#     per-voxel records of variable length (concatenated matched obs IDs).
+#     n_sol_arr[v] for THIS file is repurposed as "total ID count for voxel v"
+#     (sum across solutions of nIDs), per the C ABI.
+
+
+KEY_COLS = 4
+
+
+def write_index_key_all(
+    path: str | Path,
+    per_voxel_keys: List[np.ndarray],
+) -> None:
+    """Serialize per-voxel key rows to ``IndexKey_all.bin``.
+
+    Parameters
+    ----------
+    path
+        Output file path.
+    per_voxel_keys
+        Per-voxel ``(n_sol, 4)`` uint64 arrays. Each row is
+        ``[SpotID, nMatches, nIDs, reserved]``. ``n_sol`` must match
+        the corresponding ``IndexBest_all.bin`` voxel.
+    """
+    p = Path(path)
+    n_voxels = len(per_voxel_keys)
+    n_sol_arr = np.zeros(n_voxels, dtype=np.int32)
+    for v, kr in enumerate(per_voxel_keys):
+        kr = np.asarray(kr, dtype=np.uint64)
+        if kr.ndim != 2 or (kr.shape[0] > 0 and kr.shape[1] != KEY_COLS):
+            raise ValueError(
+                f"per_voxel_keys[{v}] must be shape (n_sol, {KEY_COLS}); "
+                f"got {kr.shape}"
+            )
+        n_sol_arr[v] = kr.shape[0]
+    header_size = header_size_bytes(n_voxels)
+    bytes_per_voxel = (KEY_COLS * 8) * n_sol_arr.astype(np.int64)
+    cumulative = np.concatenate(([0], np.cumsum(bytes_per_voxel)[:-1]))
+    off_arr = (header_size + cumulative).astype(np.int64)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("wb") as f:
+        f.write(np.int32(n_voxels).tobytes())
+        f.write(n_sol_arr.tobytes())
+        f.write(off_arr.tobytes())
+        for kr in per_voxel_keys:
+            kr_arr = np.asarray(kr, dtype=np.uint64)
+            if kr_arr.shape[0] > 0:
+                f.write(np.ascontiguousarray(kr_arr).tobytes())
+
+
+def write_index_best_ids_all(
+    path: str | Path,
+    per_voxel_ids: List[np.ndarray],
+) -> None:
+    """Serialize per-voxel matched-spot ID lists to ``IndexBest_IDs_all.bin``.
+
+    Parameters
+    ----------
+    path
+        Output file path.
+    per_voxel_ids
+        Per-voxel int32 arrays of variable length (concatenated matched
+        spot IDs across all solutions for that voxel). For consistency
+        with the C ABI, ``n_sol_arr[v]`` in this file's header is the
+        TOTAL ID count for voxel v (not the solution count).
+    """
+    p = Path(path)
+    n_voxels = len(per_voxel_ids)
+    n_ids_arr = np.zeros(n_voxels, dtype=np.int32)
+    for v, ids in enumerate(per_voxel_ids):
+        ids = np.asarray(ids, dtype=np.int32).ravel()
+        n_ids_arr[v] = ids.size
+    header_size = header_size_bytes(n_voxels)
+    bytes_per_voxel = 4 * n_ids_arr.astype(np.int64)
+    cumulative = np.concatenate(([0], np.cumsum(bytes_per_voxel)[:-1]))
+    off_arr = (header_size + cumulative).astype(np.int64)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("wb") as f:
+        f.write(np.int32(n_voxels).tobytes())
+        f.write(n_ids_arr.tobytes())
+        f.write(off_arr.tobytes())
+        for ids in per_voxel_ids:
+            ids_arr = np.asarray(ids, dtype=np.int32).ravel()
+            if ids_arr.size > 0:
+                f.write(np.ascontiguousarray(ids_arr).tobytes())
+
+
+# ---------------------------------------------------------------------------
 # Reader
 # ---------------------------------------------------------------------------
 

@@ -327,6 +327,12 @@ class Indexer:
         per_voxel_records: list[np.ndarray] = [
             np.zeros((0, 16), dtype=np.float64) for _ in range(n_vox)
         ]
+        per_voxel_keys: list[np.ndarray] = [
+            np.zeros((0, 4), dtype=np.uint64) for _ in range(n_vox)
+        ]
+        per_voxel_ids: list[np.ndarray] = [
+            np.zeros((0,), dtype=np.int32) for _ in range(n_vox)
+        ]
         for v in range(v_start, v_end):
             ctx.current_voxel_xy = voxel_xy_table[v]
             vx, vy = voxel_xy_np[v]
@@ -348,29 +354,47 @@ class Indexer:
                 block_nr=0, n_blocks=1,
                 seed_group_size=seed_group_size,
             )
-            per_voxel_records[v] = _seeds_to_record_block(
+            vox_rec, vox_keys, vox_ids = _seeds_to_record_block(
                 voxel_result, voxel_xyz=(float(vx), float(vy), 0.0),
             )
+            per_voxel_records[v] = vox_rec
+            per_voxel_keys[v] = vox_keys
+            per_voxel_ids[v] = vox_ids
 
-        # 7. Write consolidated output.
+        # 7. Write all three consolidated files: IndexBest_all.bin (vals)
+        # + IndexKey_all.bin (keys) + IndexBest_IDs_all.bin (IDs).
+        # find_grains downstream needs all three siblings.
+        from .io.consolidated import (
+            write_index_key_all, write_index_best_ids_all,
+        )
         write_index_best_all(out_path, per_voxel_records)
+        out_path_p = Path(out_path)
+        keys_path = out_path_p.with_name("IndexKey_all.bin")
+        ids_path = out_path_p.with_name("IndexBest_IDs_all.bin")
+        write_index_key_all(keys_path, per_voxel_keys)
+        write_index_best_ids_all(ids_path, per_voxel_ids)
         return v_end - v_start
 
 
 def _seeds_to_record_block(
     result, *, voxel_xyz: tuple[float, float, float] | None = None,
-) -> np.ndarray:
-    """Convert an IndexerResult into the (n_solutions, 16) record layout.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Convert an IndexerResult into the consolidated trio of arrays.
 
-    Column map (matches the IndexerScanningOMP.c writer / pf_MIDAS.py
-    parser semantics):
+    Returns ``(vals, keys, ids)`` where:
+      - ``vals`` : (n_sol, 16) float64 — the IndexBest_all.bin record block.
+      - ``keys`` : (n_sol, 4)  uint64  — the IndexKey_all.bin keys per
+                   solution: ``[SpotID, nMatches, nIDs, reserved=0]``.
+      - ``ids``  : (n_ids_total,) int32 — concatenated matched obs IDs
+                   across all solutions for IndexBest_IDs_all.bin.
 
-        col 0  : seed spot id (mirrors the C convention)
+    The ``vals`` column map (matches IndexerScanningOMP.c):
+        col 0  : seed spot id
         col 1  : avg internal-angle score (radians)
         col 2-10: 9-element orientation matrix (row-major 3×3)
-        col 11 : posX — voxel center x (µm) in scanning mode; best_pos[0] otherwise
-        col 12 : posY — voxel center y (µm) in scanning mode; best_pos[1] otherwise
-        col 13 : posZ — voxel center z (µm, =0) in scanning mode; best_pos[2] otherwise
+        col 11 : posX — voxel center x (µm) in scanning mode
+        col 12 : posY — voxel center y (µm) in scanning mode
+        col 13 : posZ — voxel center z (µm, =0) in scanning mode
         col 14 : nExpected (total predicted spots, denominator)
         col 15 : nMatches (matched predicted spots, numerator)
 
@@ -380,6 +404,8 @@ def _seeds_to_record_block(
     refinement starting point. Empty seeds (no matches) are dropped.
     """
     rows: list[list[float]] = []
+    key_rows: list[list[int]] = []
+    id_chunks: list[np.ndarray] = []
     for s in result.seeds:
         if s.n_matches <= 0:
             continue
@@ -389,6 +415,8 @@ def _seeds_to_record_block(
             px, py, pz = float(pos_xyz[0]), float(pos_xyz[1]), float(pos_xyz[2])
         else:
             px, py, pz = voxel_xyz
+        matched_ids_np = s.matched_ids.detach().cpu().numpy().astype(np.int32).ravel()
+        n_ids = int(matched_ids_np.size)
         rows.append([
             float(s.spot_id),                          # 0
             float(s.avg_ia),                           # 1
@@ -397,6 +425,24 @@ def _seeds_to_record_block(
             float(s.n_t_spots),                        # 14: nExpected
             float(s.n_matches),                        # 15: nMatches
         ])
+        key_rows.append([
+            int(s.spot_id),                            # 0: SpotID
+            int(s.n_matches),                          # 1: nMatches
+            n_ids,                                     # 2: nIDs
+            0,                                         # 3: reserved
+        ])
+        if n_ids > 0:
+            id_chunks.append(matched_ids_np)
     if not rows:
-        return np.zeros((0, 16), dtype=np.float64)
-    return np.asarray(rows, dtype=np.float64)
+        return (
+            np.zeros((0, 16), dtype=np.float64),
+            np.zeros((0, 4), dtype=np.uint64),
+            np.zeros((0,), dtype=np.int32),
+        )
+    vals = np.asarray(rows, dtype=np.float64)
+    keys = np.asarray(key_rows, dtype=np.uint64)
+    ids = (
+        np.concatenate(id_chunks).astype(np.int32, copy=False)
+        if id_chunks else np.zeros((0,), dtype=np.int32)
+    )
+    return vals, keys, ids
