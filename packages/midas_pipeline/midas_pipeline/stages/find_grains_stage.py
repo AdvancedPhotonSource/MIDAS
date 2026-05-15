@@ -81,7 +81,7 @@ def run(ctx: StageContext) -> StageResult:
             artifacts, "unique_index_single_key_bin", "",
         )),
         spots_to_index_csv=str(getattr(artifacts, "spots_to_index_csv", "")),
-        n_unique_grains=int(getattr(artifacts, "n_grains", 0)),
+        n_unique_grains=int(getattr(artifacts, "n_unique_grains", 0)),
         outputs={},
         metrics={"scan_mode": "pf", "space_group": space_group,
                  "one_sol_per_vox": ctx.config.one_sol_per_vox},

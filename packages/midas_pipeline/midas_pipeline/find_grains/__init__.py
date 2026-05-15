@@ -299,11 +299,17 @@ def find_grains_single(
     )
 
     # --- Sinogen.
+    # Spots.bin may live in either <work>/Output/Spots.bin (Python
+    # pipeline default) or <work>/Spots.bin (legacy C-output layout).
+    # Try both.
     spots_path = out_dir / "Spots.bin"
+    if not spots_path.exists():
+        alt = work / "Spots.bin"
+        if alt.exists():
+            spots_path = alt
     positions_path = work / "positions.csv"
     if not spots_path.exists():
-        # No Spots.bin available — caller asked for find_grains_single
-        # without the spots file; return what we have so far.
+        # No Spots.bin available anywhere — return what we have so far.
         return artifacts
     all_spots = _read_spots_bin(spots_path)
 
