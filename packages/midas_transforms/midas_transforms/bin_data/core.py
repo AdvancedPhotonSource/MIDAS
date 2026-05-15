@@ -187,9 +187,15 @@ def _bin_assignment(
     rad_for_ring = rad_for_ring[keep]
 
     # Per-spot ome margin: avoid division by zero when sin(eta)=0 (eta=0 or 180)
+    # and cap at 180° (half-period). Past 180°, every omega bin is already
+    # covered after modulo wrap, so a larger margin only inflates the flat
+    # (spot, eta, ome) triple list. The C path (SaveBinData.c:270-275) lets
+    # the value blow up and relies on undefined int-cast saturation; the
+    # vectorised path needs an explicit cap to avoid 1e10+ element tensors.
     sin_eta_abs = torch.abs(torch.sin(eta * _DEG2RAD))
     sin_eta_abs = torch.clamp(sin_eta_abs, min=1e-12)
     ome_margin_per = margin_ome + 0.5 * step_size_orient / sin_eta_abs
+    ome_margin_per = torch.clamp(ome_margin_per, max=180.0)
     eta_margin_per = _RAD2DEG * torch.atan(margin_eta / rad_for_ring) + 0.5 * step_size_orient
 
     omemin = 180.0 + omega - ome_margin_per
