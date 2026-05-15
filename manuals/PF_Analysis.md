@@ -1,11 +1,19 @@
-# pf_MIDAS.py User Manual
+# PF-HEDM User Manual
 
-**Version:** 11.0
+**Version:** 12.0
 **Contact:** hsharma@anl.gov
 
 > [!NOTE]
 > For **standard (box-beam)** FF-HEDM analysis, see [FF_Analysis.md](FF_Analysis.md).
 > PF-HEDM (Point-Focus / Pencil-beam / Scanning FF-HEDM) processes data from **multiple sample positions** to reconstruct a spatially-resolved microstructure map.
+
+> [!TIP]
+> Two drivers exist as of `midas-pipeline 0.1.0a0`:
+>
+> 1. **`midas-pipeline run --scan-mode pf`** — the new unified Python orchestrator. FF and PF share one stage graph; `--scan-mode pf` enables the scanning-only stages (`merge_scans`, `seeding`, `find_grains`, `sinogen`, `reconstruct`, `fuse`, `potts`, `em_refine`) and routes everything else through the same kernels as the FF path. See [§12](#12-new-driver-midas-pipeline). **Recommended for new analyses.**
+> 2. **`pf_MIDAS.py`** — the legacy driver documented below. Calls the C scanning binaries directly. Kept as the reference implementation; not deleted. Use this for parity comparisons or when you specifically need the legacy code paths.
+>
+> Both drivers consume the same parameter file and the same `positions.csv`. Outputs (`microstrFull.csv`, `microstructure.hdf`, per-grain TIFs, sinogram binaries) follow the same layouts.
 
 ---
 
@@ -446,7 +454,111 @@ See [GPU_Acceleration.md](GPU_Acceleration.md) for full GPU documentation.
 
 ---
 
-## 11. See Also
+## 12. New Driver: `midas-pipeline`
+
+`midas-pipeline` (package `midas-pipeline`, ships in `midas-suite >= 0.2.0`) is a single orchestrator that handles both FF and PF analysis. FF is `--scan-mode ff`; PF is `--scan-mode pf`. The stage graph is shared up to the indexer and forks afterwards.
+
+### 12.1 Install
+
+```bash
+# Full suite (recommended; pulls midas-pipeline + all leaves):
+pip install "midas-suite>=0.2.0"
+
+# Just the PF bundle:
+pip install "midas-suite[pf]>=0.2.0"
+
+# Or the orchestrator alone (leaves resolved transitively):
+pip install "midas-pipeline>=0.1.0a0"
+```
+
+### 12.2 Quick start
+
+```bash
+# Full PF analysis, same paramFile + positions.csv as pf_MIDAS.py:
+midas-pipeline run --scan-mode pf \
+    --params ps_pf.txt \
+    --result-dir ~/results/run01 \
+    --n-cpus 16
+
+# FF analysis through the same CLI (single source: FF = PF with nScans=1):
+midas-pipeline run --scan-mode ff \
+    --params ps_ff.txt \
+    --result-dir ~/results/ff01 \
+    --n-cpus 16
+
+# Resume from the last completed stage (hash-verified):
+midas-pipeline run --scan-mode pf --params ps_pf.txt --result-dir ~/results/run01 --resume auto
+
+# Skip the recon tail (fast indexing-only):
+midas-pipeline run --scan-mode pf --params ps_pf.txt --result-dir ~/results/run01 \
+    --skip-stage reconstruct --skip-stage fuse --skip-stage potts --skip-stage em_refine
+```
+
+The legacy `pf_MIDAS.py` invocation continues to work; the new CLI is additive.
+
+### 12.3 Stage order (PF mode)
+
+```
+zip_convert → hkl → peakfit → merge_overlaps → calc_radius → transforms
+            → cross_det_merge → global_powder
+            → merge_scans → seeding → binning → indexing → refinement
+            → find_grains → sinogen → reconstruct → fuse → potts → em_refine
+            → consolidation
+```
+
+`seeding` runs between `merge_scans` and `binning` so that:
+- `mode=unseeded` is a no-op
+- `mode=ff` consumes a pre-computed `Grains.csv` and emits `UniqueOrientations.csv` for the indexer
+- `mode=merged-ff` runs align → merge_all → ff_index → handoff (alpha; `ff_index` is staged but not yet wired — use `mode=ff` instead while that lands)
+
+`process_grains` is the FF-only consolidation stage and is skipped in PF mode (PF uses pure-Python `consolidation_pf` instead).
+
+### 12.4 Mapping legacy flags → new CLI
+
+| Legacy `pf_MIDAS.py` flag | New `midas-pipeline` flag |
+|---|---|
+| `-paramFile` | `--params` (full path; not basename) |
+| `-resultDir` | `--result-dir` |
+| `-nCPUs` / `-nNodes` / `-machineName` | `--n-cpus` / `--n-nodes` / `--machine` |
+| `-doPeakSearch 0` | `--skip-stage peakfit` |
+| `-runIndexing 0` | `--skip-stage indexing --skip-stage refinement` |
+| `-doTomo 0` | `--skip-stage reconstruct` (and `fuse`, `potts`, `em_refine` as needed) |
+| `-restartFrom <stage>` | `--resume from --resume-from-stage <stage>` |
+| `-resume <h5>` | `--resume auto` (state ledger lives in `<layer>/midas_state.h5`) |
+| `-sinoType` / `-sinoSource` / `-reconMethod` / `-mlemIter` / `-osemSubsets` | Equivalent fields under `[recon]` in the parameter file, or `--recon-*` CLI overrides |
+| `-grainsFN` | `--seeding-mode ff --seeding-grains-file <path>` |
+| `-micFN` | `--seeding-mode ff` (with the seed converted to `UniqueOrientations.csv`) |
+
+### 12.5 What's new vs the legacy driver
+
+- **Single source.** FF and PF share one orchestrator, one config dataclass tree, one provenance ledger, and identical Python kernels (`midas-index`, `midas-fit-grain`, `midas-transforms`, `midas-stress`). C scanning binaries are no longer invoked.
+- **Torch end-to-end.** Every compute kernel is `torch`-native (`CPU` / `CUDA` / `MPS`) and differentiable. No CUDA C; no `.cpu().numpy()` round-trips in the autograd path.
+- **Two refinement modes.** `position_mode="fixed"` is the C-parity port (positions clamped to voxel centre). `position_mode="voxel_bounded"` is new — refines position jointly with orientation + strain within `voxel_centre ± beam_size/2`.
+- **Friedel-symmetric scan filter by default.** Production runs use `(|s_proj − ypos| < tol) || (|−s_proj − ypos| < tol)`. The single-sided form (matching legacy C exactly) is available via `--no-friedel-symmetric-scan-filter` and is only used for the C-parity gates.
+- **Pure-Python consolidation.** `consolidation_pf` replaces the `ProcessGrainsScanningHEDM` C path (which is not invoked but not deleted). `midas-process-grains` is FF-only.
+- **Hash-verified resume.** `midas_state.h5` records the completion + output hashes per stage; `--resume auto` skips stages whose declared outputs still match.
+
+### 12.6 Output layout
+
+Identical to the legacy driver for the artefacts that matter downstream:
+
+- `<result-dir>/Layer<N>/microstrFull.csv` and `microstructure.hdf`
+- `<result-dir>/Layer<N>/Full_recon_max_project_grID.tif`
+- `<result-dir>/Layer<N>/sinos_{raw,norm,abs,normabs}_*_*.bin`, `omegas_*_*.bin`, `nrHKLs_*.bin`
+- `<result-dir>/Layer<N>/UniqueOrientations.csv`, `UniqueIndexSingleKey.bin`
+
+New artefacts (do not collide with legacy outputs):
+
+- `<result-dir>/Layer<N>/midas_state.h5` — provenance + resume ledger
+- `<result-dir>/Layer<N>/midas_log/` — per-stage timing, inputs, outputs, metrics
+
+### 12.7 Status
+
+`midas-pipeline 0.1.0a0` covers the end-to-end PF stage graph from `find_grains` through `consolidation`, with the indexer + refiner running in scanning mode. The C-parity gate (`pytest -m slow packages/midas_index/tests/test_scanning_parity_vs_c.py`) is wired and runs green on the chiltepin cluster (989 MB nData mmap is too large for typical workstation RAM). The Wenxi CP-Ti real-data shakedown is the next planned validation.
+
+---
+
+## 13. See Also
 
 - [FF_Analysis.md](FF_Analysis.md) — Standard (box-beam) FF-HEDM analysis
 - [FF_Calibration.md](FF_Calibration.md) — Geometry calibration

@@ -45,6 +45,7 @@ dependencies = [
     "midas-parsl-configs>=0.1.0",
     "midas-ff-pipeline>=0.1.0",
     "midas-nf-pipeline>=0.1.0",
+    "midas-pipeline>=0.1.0a0",     # unified FF + PF orchestrator (alpha; PF mode end-to-end verified, P5c parity gate runs on chiltepin)
 ]
 
 [project.optional-dependencies]
@@ -64,6 +65,16 @@ nf = [
     "midas-stress>=0.6.0",
     "midas-params>=0.3.0",
     "midas-nf-pipeline>=0.1.0",
+]
+pf = [
+    # Point-focus / scanning HEDM (pf-HEDM). midas-pipeline runs in
+    # --scan-mode pf and pulls index + fit-grain + transforms +
+    # stress transitively; we list the orchestrator at the top.
+    "midas-stress>=0.6.0",
+    "midas-params>=0.3.0",
+    "midas-pipeline>=0.1.0a0",
+    "midas-calibrate>=0.2.1",
+    "midas-integrate>=0.3.2",
 ]
 calib = [
     "midas-hkls>=0.3.0",
