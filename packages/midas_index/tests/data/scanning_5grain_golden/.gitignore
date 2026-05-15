@@ -1,0 +1,7 @@
+# Bin index files are too big for git (~1 GB on this fixture's bin
+# geometry) but are regenerable from Spots.bin + the C
+# ``SaveBinDataScanning`` step in test_pf_hedm.py. They're produced
+# locally by ``build.py`` and consumed by the P5c parity test, which
+# skips with a helpful message when they're absent.
+Data.bin
+nData.bin

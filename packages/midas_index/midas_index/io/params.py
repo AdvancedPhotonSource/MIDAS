@@ -41,6 +41,9 @@ _FLOAT_KEYS: dict[str, str] = {
     "Completeness": "MinMatchesToAcceptFrac",
     "ExcludePoleAngle": "ExcludePoleAngle",
     "MinEta": "ExcludePoleAngle",   # IndexerOMP.c:1454 — aliases ExcludePoleAngle
+    # --- pf-HEDM scan-aware keys (P5) ---
+    "ScanPosTol": "scan_pos_tol_um",
+    "BeamSize": "_beam_size_for_default_scan_tol",   # post-processed below
 }
 
 _INT_KEYS: dict[str, str] = {
@@ -62,6 +65,7 @@ def read_params(path: str | Path) -> IndexerParams:
     """
     p = IndexerParams()
     ring_radii_user: list[float] = []  # parallel to ring_numbers_in_order
+    beam_size_um = 0.0                  # captured for default scan_pos_tol
 
     with open(path, "r") as fp:
         for raw in fp:
@@ -160,7 +164,14 @@ def read_params(path: str | Path) -> IndexerParams:
 
             # --- scalar typed keys ---
             if key in _FLOAT_KEYS:
-                setattr(p, _FLOAT_KEYS[key], float(args[0]))
+                target = _FLOAT_KEYS[key]
+                if target == "_beam_size_for_default_scan_tol":
+                    # Capture BeamSize for the post-fold default. The C
+                    # indexer uses ScanPosTol > 0 ? ScanPosTol : BeamSize/2;
+                    # we mirror that below after the full file is parsed.
+                    beam_size_um = float(args[0])
+                else:
+                    setattr(p, target, float(args[0]))
                 continue
             if key in _INT_KEYS:
                 setattr(p, _INT_KEYS[key], int(args[0]))
@@ -177,5 +188,12 @@ def read_params(path: str | Path) -> IndexerParams:
     # IndexerOMP.c:1535-1538 — fold parallel (RingNumbers, RingRadiiUser) into sparse map
     for ring_nr, radius in zip(p.RingNumbers, ring_radii_user):
         p.RingRadii[ring_nr] = radius
+
+    # IndexerScanningOMP.c:107-110 (scan tolerance default).
+    # Production C code: ``scanTol = ScanPosTol > 0 ? ScanPosTol : BeamSize / 2``.
+    # If neither was set in the file, leave at 0 ⇒ scan filter disabled
+    # (FF default — preserves regression on every existing FF test).
+    if p.scan_pos_tol_um <= 0.0 and beam_size_um > 0.0:
+        p.scan_pos_tol_um = beam_size_um / 2.0
 
     return p

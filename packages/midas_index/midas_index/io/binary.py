@@ -31,7 +31,12 @@ def _assert_native(arr: np.ndarray, fname: str) -> None:
 
 
 def read_spots(cwd: str | Path) -> tuple[int, np.ndarray]:
-    """Read Spots.bin into a [n_spots, 9] float64 array via mmap.
+    """Read Spots.bin into a [n_spots, 9-or-10] float64 array via mmap.
+
+    Auto-detects FF (9 cols) vs PF / scanning (10 cols — FF nine plus
+    ``ScanNr`` at col 9, matching the layout emitted by
+    ``SaveBinDataScanning.c:394-409`` and consumed by the scan-aware
+    branch in ``compute.matching.compare_spots``).
 
     Returns (n_spots, ObsSpotsLab).
     """
@@ -41,12 +46,23 @@ def read_spots(cwd: str | Path) -> tuple[int, np.ndarray]:
         raise FileNotFoundError(f"Spots.bin not found at {path}")
     arr = np.memmap(path, dtype=np.float64, mode="r")
     _assert_native(arr, "Spots.bin")
-    if arr.size % 9 != 0:
+    # Prefer 10-col PF layout when the size matches both; treat divides-by-10
+    # as PF and divides-by-9-only as FF. Sizes that are multiples of both
+    # 90 doubles are ambiguous in principle, but real fixtures resolve via
+    # the file's expected col count — caller dispatches on shape downstream.
+    if arr.size % 10 == 0 and arr.size % 9 != 0:
+        n_cols = 10
+    elif arr.size % 9 == 0:
+        n_cols = 9
+    elif arr.size % 10 == 0:
+        n_cols = 10
+    else:
         raise ValueError(
-            f"Spots.bin size {arr.size * 8} bytes is not a multiple of 9 doubles"
+            f"Spots.bin size {arr.size * 8} bytes is not a multiple of "
+            "9 (FF) or 10 (PF/scanning) doubles."
         )
-    n_spots = arr.size // 9
-    return n_spots, arr.reshape(n_spots, 9)
+    n_spots = arr.size // n_cols
+    return n_spots, arr.reshape(n_spots, n_cols)
 
 
 def read_bins(cwd: str | Path) -> tuple[np.ndarray, np.ndarray]:
