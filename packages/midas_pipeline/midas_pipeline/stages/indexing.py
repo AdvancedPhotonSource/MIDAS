@@ -1,17 +1,23 @@
 """Stage: indexing.
 
-PF mode: invokes ``midas_index.Indexer.run_scanning`` on the per-voxel
-grid built from ``positions.csv``. Writes the consolidated
-``Output/IndexBest_all.bin`` consumed by ``find_grains`` and the
-refinement stage.
+Two paths, one orchestrator:
 
-FF mode: stub — FF callers use the existing ``midas-ff-pipeline``
-which shells out to ``midas-index`` directly. Wiring the FF path
-through this stage is on the P9 release work.
+- **PF mode** (``scan_mode='pf'``): invokes ``midas_index.Indexer.run_scanning``
+  on the per-voxel grid from ``positions.csv``. Writes the consolidated
+  ``Output/IndexBest_all.bin`` consumed by ``find_grains`` and refinement.
+- **FF mode** (``scan_mode='ff'``): shells out to ``python -m midas_index``
+  with the standard FF arguments (matches ``midas-ff-pipeline.stages.index``
+  byte-for-byte). Produces ``Output/IndexBest.bin`` + ``IndexBestFull.bin``.
+
+Both modes ultimately invoke the same ``midas-index`` kernels — that is
+the single-source contract.
 """
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -23,10 +29,76 @@ from ._base import StageContext
 from ._stub import stub_run
 
 
-def run(ctx: StageContext) -> StageResult:
-    if ctx.is_ff:
+def _run_ff(ctx: StageContext) -> StageResult:
+    """FF (single-scan) indexing — shell out to ``python -m midas_index``.
+
+    Same arguments as ``midas_ff_pipeline.stages.index.run`` so the FF
+    parity gate is preserved bit-for-bit.
+    """
+    started = time.time()
+    layer_dir = Path(ctx.layer_dir)
+    paramstest = layer_dir / "paramstest.txt"
+    spots_to_index = layer_dir / "SpotsToIndex.csv"
+    if not paramstest.exists() or not spots_to_index.exists():
+        LOG.info("indexing(FF): missing paramstest or SpotsToIndex.csv → skip.")
         return stub_run("indexing", ctx)
 
+    n_seeds = sum(1 for line in spots_to_index.open() if line.strip())
+    out_dir = layer_dir / "Output"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        sys.executable, "-m", "midas_index",
+        str(paramstest),
+        "0",                                   # block_nr
+        "1",                                   # n_blocks
+        str(n_seeds),
+        str(ctx.config.n_cpus),
+        "--device", ctx.config.device,
+        "--dtype", ctx.config.dtype,
+        "--group-size", str(ctx.config.indexer_group_size),
+    ]
+    LOG.info("indexing(FF): %s", " ".join(cmd))
+    log_dir = Path(ctx.log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with (log_dir / "indexing_out.csv").open("w") as out_fp, \
+         (log_dir / "indexing_err.csv").open("w") as err_fp:
+        subprocess.run(
+            cmd, cwd=str(layer_dir), check=True,
+            stdout=out_fp, stderr=err_fp,
+        )
+
+    finished = time.time()
+    index_best = out_dir / "IndexBest.bin"
+    if not index_best.exists():
+        index_best = layer_dir / "IndexBest.bin"
+    index_best_full = index_best.with_name("IndexBestFull.bin")
+    n_indexed = 0
+    if index_best.exists():
+        arr = np.fromfile(index_best, dtype=np.float64)
+        if arr.size % 15 == 0:
+            arr = arr.reshape(-1, 15)
+            n_indexed = int((arr[:, 14] > 0).sum())
+    LOG.info("indexing(FF): %d / %d seeds with non-zero data",
+             n_indexed, n_seeds)
+    return IndexResult(
+        stage_name="indexing",
+        started_at=started, finished_at=finished, duration_s=finished - started,
+        index_best_bin=str(index_best),
+        index_best_all_bin="",
+        n_voxels_indexed=0,
+        outputs={str(index_best): "", str(index_best_full): ""},
+        metrics={"scan_mode": "ff",
+                 "n_seeds_attempted": n_seeds,
+                 "n_seeds_indexed": n_indexed},
+    )
+
+
+def run(ctx: StageContext) -> StageResult:
+    if ctx.is_ff:
+        return _run_ff(ctx)
+
+    # PF (scanning) path follows.
     started = time.time()
     layer_dir = Path(ctx.layer_dir)
     out_dir = layer_dir / "Output"
@@ -59,7 +131,6 @@ def run(ctx: StageContext) -> StageResult:
         )
 
     # Change to layer_dir so load_observations resolves hkls.csv etc.
-    import os
     cwd0 = Path.cwd()
     os.chdir(layer_dir)
     try:

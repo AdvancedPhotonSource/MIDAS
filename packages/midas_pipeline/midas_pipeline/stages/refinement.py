@@ -1,17 +1,24 @@
 """Stage: refinement.
 
-PF mode: invokes ``midas_fit_grain.scan_driver.refine_scanning_block``
-on the consolidated ``Output/IndexBest_all.bin`` produced by the
-indexing stage. Each voxel's top candidate is refined under the
-scan-aware filter; per-voxel ``Results/Result_OrientPos_voxel_N.csv``
-emitted for consolidation_pf to aggregate.
+Two paths, one orchestrator:
 
-FF mode: stub — FF callers use the existing ``midas-ff-pipeline``
-which shells out to ``midas-fit-grain`` directly.
+- **PF mode** (``scan_mode='pf'``): invokes
+  ``midas_fit_grain.scan_driver.refine_scanning_block`` on the
+  consolidated ``Output/IndexBest_all.bin`` produced by the indexing
+  stage. Each voxel's top candidate is refined under the scan-aware
+  filter; per-voxel ``Results/Result_OrientPos_voxel_N.csv`` written
+  for ``consolidation_pf`` to aggregate.
+- **FF mode** (``scan_mode='ff'``): shells out to ``python -m midas_fit_grain``
+  matching ``midas-ff-pipeline.stages.refine`` byte-for-byte. Produces
+  ``Output/FitBest.bin`` + ``Results/OrientPosFit.bin``.
+
+Both modes ultimately invoke the same ``midas-fit-grain`` kernels.
 """
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -21,9 +28,81 @@ from ._base import StageContext
 from ._stub import stub_run
 
 
+def _run_ff(ctx: StageContext) -> StageResult:
+    """FF (single-scan) refinement — shell out to ``python -m midas_fit_grain``.
+
+    Mirrors ``midas_ff_pipeline.stages.refine.run`` argument-for-argument,
+    including the multi-detector pixel→angular loss swap.
+    """
+    started = time.time()
+    layer_dir = Path(ctx.layer_dir)
+    paramstest = layer_dir / "paramstest.txt"
+    spots_to_index = layer_dir / "SpotsToIndex.csv"
+    if not paramstest.exists() or not spots_to_index.exists():
+        LOG.info("refinement(FF): missing paramstest or SpotsToIndex.csv → skip.")
+        return stub_run("refinement", ctx)
+
+    n_seeds = sum(1 for line in spots_to_index.open() if line.strip())
+    output_dir = layer_dir / "Output"
+    results_dir = layer_dir / "Results"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    # Multi-detector: pixel loss is panel-local, switch to angular for the
+    # merged paramstest path. Same logic as midas-ff-pipeline.
+    is_multi_det = "\nDetParams " in ("\n" + paramstest.read_text())
+    loss = ctx.config.refinement.loss
+    if is_multi_det and loss == "pixel":
+        loss = "angular"
+        LOG.info("refinement(FF): multi-detector → switching loss to 'angular'")
+
+    cmd = [
+        sys.executable, "-m", "midas_fit_grain",
+        str(paramstest),
+        "0", "1",                              # block_nr, n_blocks
+        str(n_seeds),
+        str(ctx.config.n_cpus),
+        "--solver", ctx.config.refinement.solver,
+        "--loss", loss,
+    ]
+    if ctx.config.refinement.mode:
+        cmd += ["--mode", ctx.config.refinement.mode]
+    LOG.info("refinement(FF): %s", " ".join(cmd))
+    log_dir = Path(ctx.log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with (log_dir / "refinement_out.csv").open("w") as out_fp, \
+         (log_dir / "refinement_err.csv").open("w") as err_fp:
+        subprocess.run(
+            cmd, cwd=str(layer_dir), check=True,
+            stdout=out_fp, stderr=err_fp,
+        )
+
+    finished = time.time()
+    orient_pos_fit = results_dir / "OrientPosFit.bin"
+    n_grains_refined = 0
+    if orient_pos_fit.exists():
+        n_grains_refined = orient_pos_fit.stat().st_size // 8
+    return RefineResult(
+        stage_name="refinement",
+        started_at=started, finished_at=finished, duration_s=finished - started,
+        orient_pos_fit_bin=str(orient_pos_fit),
+        results_dir=str(results_dir),
+        n_grains_refined=int(n_grains_refined),
+        n_voxels_refined=0,
+        outputs={
+            str(orient_pos_fit): "",
+            str(output_dir / "FitBest.bin"): "",
+        },
+        metrics={"scan_mode": "ff",
+                 "loss": loss,
+                 "solver": ctx.config.refinement.solver,
+                 "mode": ctx.config.refinement.mode or "all_at_once"},
+    )
+
+
 def run(ctx: StageContext) -> StageResult:
     if ctx.is_ff:
-        return stub_run("refinement", ctx)
+        return _run_ff(ctx)
 
     started = time.time()
     layer_dir = Path(ctx.layer_dir)
