@@ -14,10 +14,13 @@ Dispatches on :attr:`midas_pipeline.config.SeedingConfig.mode`:
                   → ff_index (run midas-index FF on the merged file)
                   → handoff (Grains.csv → UniqueOrientations.csv).
 
-When ``mode`` is not ``unseeded`` and ``align.method`` is not
-``"none"`` / ``ff_index`` is not yet wired, the orchestrator raises
-``NotImplementedError`` with a clear message pointing at the missing
-integration. Soft skip otherwise.
+``ff_index`` is wired and shells out to ``python -m midas_index`` on
+the merged spot file. ``align.method`` other than ``"none"`` is the
+only sub-stage that still raises ``NotImplementedError`` — those
+methods (``ring-center``, ``cross-correlation``) require
+midas-calibrate-v2 integration that hasn't landed yet. Use
+``method="none"`` for drift-free synthetic data or when alignment
+has been done upstream. Soft skip otherwise.
 """
 
 from __future__ import annotations
