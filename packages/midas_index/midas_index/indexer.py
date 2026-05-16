@@ -212,6 +212,12 @@ class Indexer:
         scan_positions_t = torch.as_tensor(
             np.asarray(scan_positions), dtype=self.dtype, device=self.device,
         ).view(-1)
+        # MUST sort ascending — C IndexerScanningOMP.c:1676 does
+        # ``qsort(ypos_sorted, numScans, sizeof(double), cmp_double_asc)``
+        # before building the voxel grid. Some PF runs (e.g. Wenxi
+        # CP-Ti) ship positions.csv in DESCENDING order; without the
+        # sort, voxel positions get sign-flipped vs C.
+        scan_positions_t, _ = torch.sort(scan_positions_t)
         n_scans = int(scan_positions_t.numel())
         if n_scans < 2:
             raise ValueError(

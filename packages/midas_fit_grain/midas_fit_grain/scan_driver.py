@@ -210,6 +210,13 @@ def refine_scanning_block(
     scan_positions = np.loadtxt(positions_csv).astype(np.float64)
     if scan_positions.ndim == 0:
         scan_positions = scan_positions.reshape(1)
+    # MUST sort ascending — matches Indexer.run_scanning and C
+    # IndexerScanningOMP.c:1676. Some PF runs ship positions.csv in
+    # descending order; without this sort, refinement seeds land at
+    # sign-flipped voxel centers.
+    scan_positions = np.sort(scan_positions)
+    if scan_positions.ndim == 0:
+        scan_positions = scan_positions.reshape(1)
     n_scans = scan_positions.size
     if n_scans < 2:
         raise ValueError(
