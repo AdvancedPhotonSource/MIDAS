@@ -111,7 +111,7 @@ def compare_spots(
     scan_positions: torch.Tensor | None = None,  # (n_scans,) 1-D Y values (µm)
     voxel_xy: torch.Tensor | None = None,         # (N, 2) per-tuple (x, y) in µm
     scan_pos_tol_um: float = 0.0,                 # 0 ⇒ filter disabled (FF default)
-    friedel_symmetric_scan_filter: bool = True,   # production default; OFF for C parity
+    friedel_symmetric_scan_filter: bool = False,  # single-sided default = matches C + correct physics
     obs_scan_nr_int64: torch.Tensor | None = None,  # cached obs[..., 9].long() from IndexerContext
 ) -> MatchResult:
     """Vectorized binned matching. See module docstring for tie-break semantics.
@@ -366,7 +366,7 @@ def _compare_spots_jagged(
     scan_positions: torch.Tensor | None = None,
     voxel_xy: torch.Tensor | None = None,
     scan_pos_tol_um: float = 0.0,
-    friedel_symmetric_scan_filter: bool = True,
+    friedel_symmetric_scan_filter: bool = False,
     obs_scan_nr_int64: torch.Tensor | None = None,
 ) -> MatchResult:
     """Memory-bounded variant of `compare_spots`: chunks N axis into

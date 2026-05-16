@@ -80,10 +80,15 @@ class ScanGeometry:
         Spot-to-voxel scan-position-consistency tolerance. ``0`` →
         defer to kernel default (``beam_size_um / 2``).
     friedel_symmetric_scan_filter : bool
-        Production default ``True``: kernel applies
-        ``(|s_proj − ypos| < tol) OR (|−s_proj − ypos| < tol)``. The
-        single-sided form (False) is required ONLY for the C-parity
-        gate at P5; defaults to True everywhere else.
+        **Defaults to False (single-sided)** to match the C indexer's
+        physics. The OR-form
+        ``(|s_proj − ypos| < tol) OR (|−s_proj − ypos| < tol)`` was
+        once the default but was wrong physics: it accepts spots that
+        could be Friedel pairs of OTHER voxels' grains, which doesn't
+        correspond to "is THIS voxel in the beam when THIS spot was
+        observed." The OR-form is kept available as an opt-in for
+        experimental modes (e.g. sinogram cell masking,
+        ``pf_MIDAS.py:242``).
     """
 
     scan_mode: ScanMode
@@ -91,7 +96,7 @@ class ScanGeometry:
     scan_positions: np.ndarray
     beam_size_um: float
     scan_pos_tol_um: float = 0.0
-    friedel_symmetric_scan_filter: bool = True
+    friedel_symmetric_scan_filter: bool = False
 
     def __post_init__(self) -> None:
         self.scan_positions = np.asarray(self.scan_positions, dtype=np.float64).ravel()
@@ -122,7 +127,7 @@ class ScanGeometry:
             scan_positions=np.zeros(1, dtype=np.float64),
             beam_size_um=beam_size_um,
             scan_pos_tol_um=0.0,
-            friedel_symmetric_scan_filter=True,
+            friedel_symmetric_scan_filter=False,
         )
 
     @classmethod
@@ -134,7 +139,7 @@ class ScanGeometry:
         beam_size_um: float,
         start_um: Optional[float] = None,
         scan_pos_tol_um: float = 0.0,
-        friedel_symmetric_scan_filter: bool = True,
+        friedel_symmetric_scan_filter: bool = False,
     ) -> "ScanGeometry":
         """Construct a PF scan geometry from uniform step parameters.
 

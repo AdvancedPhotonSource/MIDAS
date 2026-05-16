@@ -67,7 +67,8 @@ def test_scan_kwargs_returns_voxel_xy_when_set():
     ctx.scan_pos_tol_um = 2.0
     kw = ctx.scan_kwargs(n_tuples=3)
     assert kw["scan_pos_tol_um"] == 2.0
-    assert kw["friedel_symmetric_scan_filter"] is True
+    # Default is single-sided (matches C; see params.py docstring).
+    assert kw["friedel_symmetric_scan_filter"] is False
     assert kw["voxel_xy"].shape == (3, 2)
     np.testing.assert_array_equal(
         kw["voxel_xy"][0].numpy(), [5.0, 0.0],

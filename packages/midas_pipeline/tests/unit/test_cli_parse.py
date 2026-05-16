@@ -125,7 +125,8 @@ def test_run_pf_full(tmp_path):
     assert cfg.fusion.cw_potts_lambda == 0.5
 
 
-def test_friedel_default_on(tmp_path):
+def test_friedel_default_single_sided(tmp_path):
+    """Default is single-sided (matches C physics)."""
     params = tmp_path / "P.txt"
     params.write_text("")
     parser = _build_parser()
@@ -135,10 +136,27 @@ def test_friedel_default_on(tmp_path):
         "--n-scans", "5", "--scan-step", "2.0", "--beam-size", "4.0",
     ])
     cfg = build_config(args)
+    assert cfg.scan.friedel_symmetric_scan_filter is False
+
+
+def test_friedel_or_form_opt_in(tmp_path):
+    """``--friedel-symmetric-scan-filter`` enables the OR-form (experimental)."""
+    params = tmp_path / "P.txt"
+    params.write_text("")
+    parser = _build_parser()
+    args = parser.parse_args([
+        "run", "--scan-mode", "pf",
+        "--params", str(params), "--result", str(tmp_path / "out"),
+        "--n-scans", "5", "--scan-step", "2.0", "--beam-size", "4.0",
+        "--friedel-symmetric-scan-filter",
+    ])
+    cfg = build_config(args)
     assert cfg.scan.friedel_symmetric_scan_filter is True
 
 
-def test_friedel_off_for_c_parity(tmp_path):
+def test_no_friedel_flag_still_accepted_as_noop(tmp_path):
+    """Backwards-compat: the OLD ``--no-friedel-symmetric-scan-filter``
+    flag is still accepted (it's now a no-op since False is the default)."""
     params = tmp_path / "P.txt"
     params.write_text("")
     parser = _build_parser()

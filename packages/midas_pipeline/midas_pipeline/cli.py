@@ -90,11 +90,19 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="beam half-width along Y, micrometers")
     run.add_argument("--scan-pos-tol", type=float, default=0.0,
                      help="(pf) scan-position-filter tolerance (0 → beam_size/2)")
+    run.add_argument("--friedel-symmetric-scan-filter", dest="friedel",
+                     action="store_true",
+                     help="(pf) enable OR-form scan filter: "
+                          "(|s_proj − ypos| < tol) OR (|−s_proj − ypos| < tol). "
+                          "Default is single-sided, which matches C and the "
+                          "correct physics for 'voxel illuminated when spot "
+                          "observed'. OR-form is an experimental opt-in.")
+    # Kept for backwards-compat (no-op now since the default is already
+    # single-sided), but allowed so old invocations don't fail.
     run.add_argument("--no-friedel-symmetric-scan-filter", dest="friedel",
                      action="store_false",
-                     help="(pf) disable Friedel-symmetric scan filter "
-                          "(use single-sided form for C-parity gates)")
-    run.set_defaults(friedel=True)
+                     help=argparse.SUPPRESS)
+    run.set_defaults(friedel=False)
 
     # Compute
     run.add_argument("--n-cpus", type=int, default=16)

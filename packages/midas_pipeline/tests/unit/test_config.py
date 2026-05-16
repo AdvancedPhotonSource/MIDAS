@@ -46,7 +46,9 @@ class TestScanGeometry:
         assert scan.n_scans == 5
         np.testing.assert_allclose(scan.scan_positions, [-4.0, -2.0, 0.0, 2.0, 4.0])
         assert scan.beam_size_um == 4.0
-        assert scan.friedel_symmetric_scan_filter is True
+        # Default is single-sided (matches C + correct physics — see
+        # discussion in ScanGeometry.friedel_symmetric_scan_filter docstring).
+        assert scan.friedel_symmetric_scan_filter is False
         assert scan.is_pf and not scan.is_ff
 
     def test_pf_with_explicit_start(self):

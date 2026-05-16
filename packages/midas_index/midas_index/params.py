@@ -102,7 +102,7 @@ class IndexerParams:
     # See P0 audit §1b/§1d in the plan file for the binary-layout contract.
     scan_positions_path: str = ""           # path to positions.csv; "" disables scan mode
     scan_pos_tol_um: float = 0.0            # 0 ⇒ kernel disables filter (FF default)
-    friedel_symmetric_scan_filter: bool = True   # production default; OFF for C-parity gate
+    friedel_symmetric_scan_filter: bool = False  # single-sided = correct physics + matches C
     multi_solution_output: bool = False     # True → emit IndexBest_all.bin + friends
     # Ring number used for seed selection in scanning mode (mirrors
     # IndexerScanningOMP.c:1687-1693: the seed pool is all obs spots with
