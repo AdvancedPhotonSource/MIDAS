@@ -25,6 +25,7 @@ from typing import Optional, Tuple
 
 import math
 
+import numpy as np
 import torch
 
 from midas_diffract import HEDMForwardModel  # type: ignore
@@ -196,8 +197,30 @@ def refine_grain(
     obs_ring_slot = ring_slot_lookup(cfg.RingNumbers, obs.ring_nr)
 
     # Tolerances for re-association (radians).
-    omega_tol = max(cfg.MarginOme, 2.0) * DEG2RAD
-    eta_tol = max(cfg.MarginEta, 5.0) * DEG2RAD
+    #
+    # ``cfg.MarginOme`` is in degrees → convert with DEG2RAD.
+    # ``cfg.MarginEta`` is in MICROMETERS (arc distance on the detector,
+    # matches IndexerOMP.c:1773-1779 convention). Convert to an angular
+    # tolerance via ``atan(MarginEta / ring_radius)``. Use the median
+    # ring radius as a representative single-tol value — per-ring tols
+    # would be more correct but require associate() to accept a vector.
+    #
+    # No floor: paramstest values like MarginOme=0.5°, MarginEta=500µm
+    # were silently inflated to 2°/5° before this fix (the 2°/5° were a
+    # placeholder bound that turned out to defeat user-set tolerances).
+    omega_tol = float(cfg.MarginOme) * DEG2RAD
+    if cfg.RingRadii:
+        import math
+        # Use the median positive ring radius — guards against any
+        # zero-padded entries from the param-parser.
+        radii_pos = [r for r in cfg.RingRadii if r > 0]
+        if radii_pos:
+            rep_radius = float(np.median(radii_pos))
+            eta_tol = float(math.atan(cfg.MarginEta / rep_radius))
+        else:
+            eta_tol = float(cfg.MarginEta) * DEG2RAD   # fallback: treat as deg
+    else:
+        eta_tol = float(cfg.MarginEta) * DEG2RAD       # fallback: treat as deg
 
     # Initial association.
     if precomputed_match is not None:
